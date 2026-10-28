@@ -1,6 +1,6 @@
 import {apiFetch,connectBridge,disconnectBridge,bridgeState} from './2026-10-28-bridge-client.mjs';
 import {sessionStore} from './2026-10-28-storage.mjs';
-import {isAdditionRequest,additionRGBA,overRGBA,blendRGBA,featherInside,History,requestGeometry,selectionClickIntent} from './2026-10-28-core.mjs';
+import {isAdditionRequest,fitAddition,overRGBA,blendRGBA,featherInside,History,requestGeometry,selectionClickIntent} from './2026-10-28-core.mjs';
 import {removeBackground} from './2026-10-28-background.mjs';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -285,7 +285,7 @@ async function generate(){
     if(body.imageVerified)checkConnection();if(body.timings){const t=body.timings;$('#generation-timing').hidden=false;$('#generation-timing').textContent=`최근 생성 ${(t.totalMs/1000).toFixed(1)}초 · Codex ${(t.codexMs/1000).toFixed(1)}초 · 결과 회수 ${(t.retrievalMs/1000).toFixed(1)}초`;}
     stopProgress();$('#busy-message').textContent='결과 처리 중';const image=await imageFromURL(body.image);
     if(id!==requestSerial||rev!==revision)return;
-    let result,addition=null,comparison=before;
+    let result,addition=null,additionPlacement=null,comparison=before;
     if(operation==='generate'){
       result=makeCanvas(image.width,image.height);result.getContext('2d').drawImage(image,0,0);
       comparison=makeCanvas(image.width,image.height);
@@ -293,10 +293,18 @@ async function generate(){
     }else{
       const generated=makeCanvas(doc.width,doc.height),sx=image.width/geometry.width,sy=image.height/geometry.height;
       generated.getContext('2d').drawImage(image,geometry.x*sx,geometry.y*sy,geometry.drawWidth*sx,geometry.drawHeight*sy,0,0,doc.width,doc.height);
-      if(adding){const rgba=additionRGBA(pixels(generated).data,allowed,protectedPixels);addition=fromPixels(rgba,doc.width,doc.height);result=fromPixels(overRGBA(pixels(before).data,rgba),doc.width,doc.height);}else result=fromPixels(blendRGBA(pixels(before).data,pixels(generated).data,allowed,protectedPixels),doc.width,doc.height);
+      if(adding){
+        // Inspect the full returned PNG before cropping document padding.
+        const full=makeCanvas(image.width,image.height);full.getContext('2d').drawImage(image,0,0);
+        const placement=fitAddition(pixels(full).data,image.width,image.height,allowed,doc.width,doc.height,protectedPixels),s=placement.source;
+        addition=makeCanvas(s.width,s.height);addition.getContext('2d').drawImage(image,s.x,s.y,s.width,s.height,0,0,s.width,s.height);
+        additionPlacement={x:placement.x,y:placement.y,width:placement.width,height:placement.height};
+        const overlay=makeCanvas(doc.width,doc.height);overlay.getContext('2d').drawImage(addition,placement.x,placement.y,placement.width,placement.height);
+        result=fromPixels(overRGBA(pixels(before).data,pixels(overlay).data),doc.width,doc.height);
+      }else result=fromPixels(blendRGBA(pixels(before).data,pixels(generated).data,allowed,protectedPixels),doc.width,doc.height);
     }
     if(!state){initialize(makeCanvas(result.width,result.height),'AI 이미지',true);}
-    pending={before:comparison,result,operation,addition,targetId};showOriginal=false;render();if(operation==='generate'){zoom=Math.max(.05,Math.min(1,(stage.clientWidth-100)/result.width,(stage.clientHeight-150)/result.height));pan={x:0,y:0};view();}toast('결과를 비교하고 마음에 들면 적용해주세요.');
+    pending={before:comparison,result,operation,addition,additionPlacement,targetId};showOriginal=false;render();if(operation==='generate'){zoom=Math.max(.05,Math.min(1,(stage.clientWidth-100)/result.width,(stage.clientHeight-150)/result.height));pan={x:0,y:0};view();}toast('결과를 비교하고 마음에 들면 적용해주세요.');
   }catch(error){if(error.name!=='AbortError')toast(error.message);}
   finally{if(id===requestSerial){generating=false;controller=null;stopProgress();$('#busy-panel').hidden=true;updateAvailability();}}
 }
@@ -306,12 +314,12 @@ async function cancelGeneration(){if(cancelling||!generating)return;cancelling=t
   finally{cancelling=false;if(confirmed){generating=false;$('#busy-panel').hidden=true;$('[data-action="cancel-generation"]').textContent='생성 취소';}else{$('#busy-message').textContent='취소 완료 미확인';$('[data-action="cancel-generation"]').textContent='취소 상태 다시 확인';}updateAvailability();}
 }
 function applyResult(){
-  if(!pending)return;if(pending.addition){const {addition,targetId}=pending;pending=null;const l=layer(addition,'AI 추가 대상',targetId?{id:targetId}:{});commit({...state,layers:[...state.layers.filter(a=>a.id!==targetId),l],active:l.id,selection:blankMask()},'대상을 별도 레이어에 추가했습니다. 원본 배경은 유지됩니다.');return;}const result=pending.result,operation=pending.operation;pending=null;
+  if(!pending)return;if(pending.addition){const {addition,targetId,additionPlacement}=pending;pending=null;const l=layer(addition,'AI 추가 대상',{...(targetId?{id:targetId}:{}),...additionPlacement});tool='move';commit({...state,layers:[...state.layers.filter(a=>a.id!==targetId),l],active:l.id,selection:blankMask()},'선택 영역 안에 배치했습니다. 모서리를 드래그해 크기를 조절하세요.');return;}const result=pending.result,operation=pending.operation;pending=null;
   const l=layer(result,operation==='generate'?'AI 생성 이미지':'AI 편집 결과');
   // Keep previous layers for recovery, hide them to avoid double-compositing transparent pixels.
   commit({...state,width:result.width,height:result.height,layers:[...state.layers.map(a=>({...a,visible:false})),l],active:l.id,selection:makeCanvas(result.width,result.height),protection:operation==='generate'?makeCanvas(result.width,result.height):state.protection},'결과를 적용했습니다. 이전 레이어는 숨김 상태로 보관했습니다.');
 }
-function exportPNG(){if(!state)return;const c=pending?pending.result:flatten();c.toBlob(blob=>{if(!blob){toast('PNG를 만들지 못했습니다.');return;}const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=`2026-10-28-${state.name.replace(/[<>:"/\\|?*]/g,'-')}-v1.5.0.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('PNG를 내보냈습니다. 원본 파일은 변경하지 않았습니다.');},'image/png');}
+function exportPNG(){if(!state)return;const c=pending?pending.result:flatten();c.toBlob(blob=>{if(!blob){toast('PNG를 만들지 못했습니다.');return;}const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=`2026-10-28-${state.name.replace(/[<>:"/\\|?*]/g,'-')}-v1.5.1.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('PNG를 내보냈습니다. 원본 파일은 변경하지 않았습니다.');},'image/png');}
 
 function sample(){
   if(locked())return;if(state&&!confirm('현재 작업을 샘플로 바꿀까요? 필요한 결과는 먼저 내보내세요.'))return;
@@ -403,7 +411,7 @@ function canvasBlob(c){return new Promise((resolve,reject)=>c.toBlob(b=>b?resolv
 async function packDocument(doc){return {...doc,selection:await canvasBlob(doc.selection),protection:await canvasBlob(doc.protection),layers:await Promise.all(doc.layers.map(async l=>({...l,bitmap:await canvasBlob(l.bitmap),original:await canvasBlob(l.original)})))};}
 async function unpackCanvas(blob){const image=await createImageBitmap(blob);const c=makeCanvas(image.width,image.height);c.getContext('2d').drawImage(image,0,0);image.close();return c;}
 async function unpackDocument(doc){return {...doc,selection:await unpackCanvas(doc.selection),protection:await unpackCanvas(doc.protection),layers:await Promise.all(doc.layers.map(async l=>({...l,bitmap:await unpackCanvas(l.bitmap),original:await unpackCanvas(l.original)})))};}
-function scheduleSave(){if(!storageReady||restoring||!state)return;clearTimeout(saveTimer);$('#save-status').textContent='브라우저 저장 대기 중';saveTimer=setTimeout(()=>{const doc=state,result=pending,drafts={...modeDrafts,[mode]:$('#prompt').value},selectedMode=mode,editIntent=$('#edit-intent').value;$('#save-status').textContent='브라우저에 저장 중…';saveQueue=saveQueue.catch(()=>{}).then(async()=>{const data={version:1,savedAt:Date.now(),doc:await packDocument(doc),mode:selectedMode,editIntent,drafts,pending:result?{operation:result.operation,targetId:result.targetId,addition:result.addition?await canvasBlob(result.addition):null,before:await canvasBlob(result.before),result:await canvasBlob(result.result)}:null};await sessionStore(data);savedSession=data;$('#restore-session').hidden=true;$('#save-status').textContent='브라우저에 자동 저장됨';}).catch(()=>{$('#save-status').textContent='자동 저장 실패 · PNG를 내보내주세요';});},600);}
+function scheduleSave(){if(!storageReady||restoring||!state)return;clearTimeout(saveTimer);$('#save-status').textContent='브라우저 저장 대기 중';saveTimer=setTimeout(()=>{const doc=state,result=pending,drafts={...modeDrafts,[mode]:$('#prompt').value},selectedMode=mode,editIntent=$('#edit-intent').value;$('#save-status').textContent='브라우저에 저장 중…';saveQueue=saveQueue.catch(()=>{}).then(async()=>{const data={version:1,savedAt:Date.now(),doc:await packDocument(doc),mode:selectedMode,editIntent,drafts,pending:result?{operation:result.operation,targetId:result.targetId,additionPlacement:result.additionPlacement,addition:result.addition?await canvasBlob(result.addition):null,before:await canvasBlob(result.before),result:await canvasBlob(result.result)}:null};await sessionStore(data);savedSession=data;$('#restore-session').hidden=true;$('#save-status').textContent='브라우저에 자동 저장됨';}).catch(()=>{$('#save-status').textContent='자동 저장 실패 · PNG를 내보내주세요';});},600);}
 async function restoreAvailable(){try{savedSession=await sessionStore();$('#restore-session').hidden=!savedSession;$('#save-status').textContent=savedSession?'저장된 작업이 있습니다. 복구 버튼을 눌러주세요.':'편집하면 이 브라우저에 자동 저장됩니다.';}catch{$('#save-status').textContent='브라우저 저장을 사용할 수 없습니다.';}finally{storageReady=true;if(state)scheduleSave();}}
 $('#restore-session').addEventListener('click',async()=>{if(!savedSession||locked())return;if(state&&!confirm('현재 작업을 저장된 작업으로 교체할까요?'))return;const chosenSession=savedSession;restoring=true;clearTimeout(saveTimer);processing=true;updateAvailability();try{await saveQueue.catch(()=>{});const saved=chosenSession,doc=await unpackDocument(saved.doc),result=saved.pending?{...saved.pending,addition:saved.pending.addition?await unpackCanvas(saved.pending.addition):null,before:await unpackCanvas(saved.pending.before),result:await unpackCanvas(saved.pending.result)}:null;state=doc;pending=result;history=new History({...doc,action:'저장된 작업 복구'});serial=Math.max(serial,...doc.layers.map(l=>l.id));Object.assign(modeDrafts,saved.drafts);mode=saved.mode||'edit';$('#edit-intent').value=saved.editIntent||(mode==='composite'?'composite':'add');$('#prompt').value=modeDrafts[mode]||'';revision++;$('#welcome').hidden=true;frame.hidden=false;$('#restore-session').hidden=true;$('#save-status').textContent='저장된 작업 복구됨';fit();render();toast('레이어·선택·보호 영역을 복구했습니다. 이전 실행 취소 이력은 새로 시작합니다.');}catch{toast('저장된 작업을 복구하지 못했습니다.');}finally{processing=false;restoring=false;updateAvailability();scheduleSave();}});
 $('#prompt').addEventListener('input',scheduleSave);

@@ -26,6 +26,36 @@ export function blendRGBA(original, generated, mask, protection) {
   return out;
 }
 
+// Fit the entire transparent subject into a safe rectangle inside the selection.
+// Histogram rectangles keep irregular selections and protected pixels intact.
+export function fitAddition(rgba,sourceWidth,sourceHeight,mask,width,height,protection) {
+  if(rgba.length!==sourceWidth*sourceHeight*4||mask.length!==width*height)throw Error('이미지와 마스크 크기가 다릅니다.');
+  let left=sourceWidth,top=sourceHeight,right=-1,bottom=-1,transparent=0,visible=0;
+  for(let y=0;y<sourceHeight;y++)for(let x=0;x<sourceWidth;x++){
+    const a=rgba[(y*sourceWidth+x)*4+3];if(a<8)transparent++;if(a>8)visible++;
+    if(a){left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x);bottom=Math.max(bottom,y);}
+  }
+  if(transparent<Math.max(1,sourceWidth*sourceHeight*.01))throw Error('투명 배경 결과가 아닙니다. 원본 배경을 보호하기 위해 적용하지 않았습니다.');
+  if(!visible)throw Error('추가할 대상이 없는 결과입니다.');
+  const sw=right-left+1,sh=bottom-top+1,heights=new Uint32Array(width);
+  let best=null,bestScale=0;
+  for(let y=0;y<height;y++){
+    for(let x=0;x<width;x++){const p=y*width+x;heights[x]=mask[p]>=128&&!(protection?.[p])?heights[x]+1:0;}
+    const stack=[];
+    for(let x=0;x<=width;x++){
+      const h=x===width?0:heights[x];let start=x;
+      while(stack.length&&stack[stack.length-1].h>h){
+        const bar=stack.pop(),w=x-bar.x,scale=Math.min(w/sw,bar.h/sh);start=bar.x;
+        if(scale>bestScale){bestScale=scale;best={x:bar.x,y:y-bar.h+1,width:w,height:bar.h};}
+      }
+      if(h&&(!stack.length||stack[stack.length-1].h<h))stack.push({x:start,h});
+    }
+  }
+  if(!best)throw Error('대상을 배치할 수 있는 선택 영역이 없습니다. 보호 영역을 확인해주세요.');
+  const scale=Math.min(1,bestScale)*.96,w=sw*scale,h=sh*scale;
+  return {source:{x:left,y:top,width:sw,height:sh},x:best.x+(best.width-w)/2,y:best.y+(best.height-h)/2,width:w,height:h};
+}
+
 export function additionRGBA(generated,mask,protection) {
   if(generated.length!==mask.length*4)throw Error('이미지와 마스크 크기가 다릅니다.');
   let transparent=0,visible=0;
