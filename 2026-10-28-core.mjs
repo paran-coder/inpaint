@@ -1,4 +1,64 @@
 // Pure image operations. Masks are one byte per pixel, 255 means editable.
+// PhotoCraft's layer.moveTo / layer.delete semantics: one structural operation,
+// independent of selection masks. UI gestures all use this shared entry point.
+export function layerCommand(doc,command,p={}){
+  const source=doc.layers.find(l=>l.id===p.layer);if(!source)return doc;
+  if(command==='transform'){
+    const changes=p.changes||{},keys=Object.keys(changes);
+    if(!keys.length||keys.some(k=>!['x','y','width','height','rotation'].includes(k)||!Number.isFinite(changes[k])||(['width','height'].includes(k)&&changes[k]<=0)))return doc;
+    if(keys.every(k=>source[k]===changes[k]))return doc;
+    return {...doc,layers:doc.layers.map(l=>l.id===source.id?{...l,...changes}:l)};
+  }
+  if(command==='delete'){
+    const layers=doc.layers.filter(l=>l.id!==source.id);
+    return {...doc,layers,active:doc.active===source.id?layers.at(-1)?.id:doc.active};
+  }
+  if(command!=='moveTo'||source.id===p.target||!['above','below'].includes(p.position))return doc;
+  const layers=doc.layers.filter(l=>l.id!==source.id),target=layers.findIndex(l=>l.id===p.target);
+  if(target<0)return doc;
+  layers.splice(target+(p.position==='above'?1:0),0,source);
+  return layers.every((l,i)=>l===doc.layers[i])?doc:{...doc,layers};
+}
+
+// Narrow recovery for a painted neutral checkerboard, not semantic segmentation.
+// Requires two neutral border tones and repeated alternation, then removes only
+// connected backdrop pixels. Never runs on genuine transparent outputs.
+export function recoverCheckerboard(rgba,width,height){
+  if(rgba.length!==width*height*4||width<32||height<32)return null;
+  const hist=new Uint32Array(64),border=[];
+  const tone=p=>{const i=p*4,r=rgba[i],g=rgba[i+1],b=rgba[i+2];return {chroma:Math.max(r,g,b)-Math.min(r,g,b),v:(r+g+b)/3};};
+  let transparent=0;for(let p=0;p<width*height;p++)if(rgba[p*4+3]<250)transparent++;
+  if(transparent>width*height*.001)return null;
+  for(let x=0;x<width;x++)border.push(x,(height-1)*width+x);
+  for(let y=1;y<height-1;y++)border.push(y*width,y*width+width-1);
+  let neutral=0;for(const p of border){const t=tone(p);if(t.chroma<=12&&t.v>=80){hist[Math.min(63,t.v>>2)]++;neutral++;}}
+  if(neutral<border.length*.94)return null;
+  let peak=0;for(let i=1;i<64;i++)if(hist[i]>hist[peak])peak=i;
+  let other=-1;for(let i=20;i<64;i++)if(Math.abs(i-peak)>=8&&(other<0||hist[i]>hist[other]))other=i;
+  if(other<0||hist[other]<neutral*.08||hist[peak]<neutral*.08)return null;
+  const dark=Math.min(peak,other)*4,light=Math.max(peak,other)*4,mid=(dark+light)/2;
+  let transitions=0,last=null;
+  for(let x=0;x<width;x++){const t=tone(x);if(t.chroma>12)continue;const side=t.v>mid;if(last!==null&&side!==last)transitions++;last=side;}
+  if(transitions<6)return null;
+  const n=width*height,removed=new Uint8Array(n),queue=new Uint32Array(n);let tail=0,head=0;
+  const visit=p=>{if(removed[p])return;const t=tone(p);if(t.chroma>18)return;removed[p]=1;queue[tail++]=p;};
+  border.forEach(visit);
+  while(head<tail){const p=queue[head++],x=p%width;if(x)visit(p-1);if(x<width-1)visit(p+1);if(p>=width)visit(p-width);if(p<n-width)visit(p+width);}
+  // Keep the dominant object; stray dark symbols on a fake checkerboard must not
+  // become huge subject bounds. Enclosed neutral details remain in the object.
+  const seen=new Uint8Array(n),labels=new Uint32Array(n);let label=0,best=0,bestCount=0;
+  for(let start=0;start<n;start++){
+    if(removed[start]||seen[start])continue;label++;tail=1;head=0;queue[0]=start;seen[start]=1;let count=0;
+    while(head<tail){const p=queue[head++],x=p%width;labels[p]=label;count++;
+      for(const q of [x?p-1:-1,x<width-1?p+1:-1,p>=width?p-width:-1,p<n-width?p+width:-1])if(q>=0&&!removed[q]&&!seen[q]){seen[q]=1;queue[tail++]=q;}
+    }
+    if(count>bestCount){bestCount=count;best=label;}
+  }
+  if(bestCount<n*.003||bestCount>n*.65)return null;
+  const out=new Uint8ClampedArray(rgba);for(let p=0;p<n;p++)if(labels[p]!==best)out[p*4+3]=0;
+  return out;
+}
+
 export function deleteIntent(layerFocus,hasSelection){return layerFocus||!hasSelection?'layer':'selection';}
 export function resizeDimensions(layer,key,value,locked=true){
   if(!['width','height'].includes(key)||!Number.isFinite(value)||value<1||value>8192)throw Error('크기는 1~8192 px 범위로 입력해주세요.');
