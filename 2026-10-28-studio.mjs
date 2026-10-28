@@ -1,3 +1,4 @@
+import {apiFetch,connectBridge,disconnectBridge,bridgeState} from './2026-10-28-bridge-client.mjs';
 import {sessionStore} from './2026-10-28-storage.mjs';
 import {isAdditionRequest,additionRGBA,overRGBA,blendRGBA,featherInside,History,requestGeometry,selectionClickIntent} from './2026-10-28-core.mjs';
 import {removeBackground} from './2026-10-28-background.mjs';
@@ -10,7 +11,7 @@ let cursorPosition=null,importTarget=null;
 let connectionState=null;
 let progressTimer=null,generationStarted=0,currentRequestId=null,cancelling=false;
 function stopProgress(){clearInterval(progressTimer);progressTimer=null;}
-function startProgress(){stopProgress();generationStarted=Date.now();let polling=false;const tick=async()=>{if(!generating)return;$('#busy-elapsed').textContent=`${Math.floor((Date.now()-generationStarted)/1000)}초 경과`;if(polling)return;polling=true;try{const r=await fetch('/api/progress?requestId='+encodeURIComponent(currentRequestId));const p=await r.json();if(generating&&p.active&&p.requestId===currentRequestId)$('#busy-message').textContent=({preparation:'이미지 준비 및 연결 확인 중',generation:'이미지 생성 중',result:'결과 처리 중'})[p.stage]||'이미지 생성 중';}catch{}finally{polling=false;}};progressTimer=setInterval(tick,1000);tick();}
+function startProgress(){stopProgress();generationStarted=Date.now();let polling=false;const tick=async()=>{if(!generating)return;$('#busy-elapsed').textContent=`${Math.floor((Date.now()-generationStarted)/1000)}초 경과`;if(polling)return;polling=true;try{const r=await apiFetch('/api/progress?requestId='+encodeURIComponent(currentRequestId));const p=await r.json();if(generating&&p.active&&p.requestId===currentRequestId)$('#busy-message').textContent=({preparation:'이미지 준비 및 연결 확인 중',generation:'이미지 생성 중',result:'결과 처리 중'})[p.stage]||'이미지 생성 중';}catch{}finally{polling=false;}};progressTimer=setInterval(tick,1000);tick();}
 const modeDrafts={edit:'',composite:'',generate:''};
 const contourCache=new WeakMap();
 const brushCursor=document.createElement('div');brushCursor.id='brush-cursor';brushCursor.hidden=true;brushCursor.setAttribute('aria-hidden','true');stage.append(brushCursor);overlay.tabIndex=0;
@@ -86,7 +87,7 @@ function updateAvailability(){
   $('#edit-intent').disabled=processing||generating||!!pending;
   const has=!!state,selection=has&&countMask(state.selection)>0;
   $('#generate').disabled=!connected||processing||generating||!!pending||(!has&&mode!=='generate')||(mode==='edit'&&!selection)||(mode==='composite'&&(!active()||active().empty));
-  $('#generation-help').textContent=generating?'Codex 생성 중입니다. 결과가 도착하면 비교할 수 있습니다.':!connected?(connectionState?.provider==='api'?'API 연결 설정을 확인해주세요.':'연결 설정에서 Codex 설치와 ChatGPT 로그인을 확인해주세요.'):connectionState?.usageLimited?'구독 사용 제한입니다. 해제 후 다시 시도하거나 연결 상태를 다시 확인해주세요.':mode==='edit'&&!selection?'브러시·사각형·올가미로 수정할 영역을 선택해주세요.':mode==='composite'?'현재 배치를 바탕으로 주변 조명·그림자를 맞춥니다.':'결과를 확인한 후 적용할 수 있습니다.';
+  $('#generation-help').textContent=generating?'Codex 생성 중입니다. 결과가 도착하면 비교할 수 있습니다.':!connected?(connectionState?.provider==='api'?'API 연결 설정을 확인해주세요.':'AI 연결을 누르거나 연결 도움말에서 Codex 상태를 확인해주세요.'):connectionState?.usageLimited?'구독 사용 제한입니다. 해제 후 다시 시도하거나 연결 상태를 다시 확인해주세요.':mode==='edit'&&!selection?'브러시·사각형·올가미로 수정할 영역을 선택해주세요.':mode==='composite'?'현재 배치를 바탕으로 주변 조명·그림자를 맞춥니다.':'결과를 확인한 후 적용할 수 있습니다.';
   $('#remove-bg').disabled=!active()||processing||generating||!!pending;
   $$('[data-action="undo"]').forEach(b=>b.disabled=!history?.canUndo||processing||generating||!!pending);
   $$('[data-action="redo"]').forEach(b=>b.disabled=!history?.canRedo||processing||generating||!!pending);
@@ -279,7 +280,7 @@ async function generate(){
     if(operation==='composite'&&active())payload.reference=active().bitmap.toDataURL('image/png');
   }
   $('#busy-message').textContent='연결 확인 및 전송 중';
-    const response=await fetch('/api/image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal});
+    const response=await apiFetch('/api/image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal});
     const body=await response.json();if(!response.ok){if(body.code==='USAGE_LIMIT'){connectionState={...connectionState,usageLimited:true};$('#connection-badge').textContent='Codex 사용 제한';$('#generation-help').textContent='구독 사용 제한입니다. 제한 해제 후 다시 시도해주세요.';}throw Error(body.error||'이미지를 생성하지 못했습니다.');}
     if(body.imageVerified)checkConnection();if(body.timings){const t=body.timings;$('#generation-timing').hidden=false;$('#generation-timing').textContent=`최근 생성 ${(t.totalMs/1000).toFixed(1)}초 · Codex ${(t.codexMs/1000).toFixed(1)}초 · 결과 회수 ${(t.retrievalMs/1000).toFixed(1)}초`;}
     stopProgress();$('#busy-message').textContent='결과 처리 중';const image=await imageFromURL(body.image);
@@ -300,7 +301,7 @@ async function generate(){
   finally{if(id===requestSerial){generating=false;controller=null;stopProgress();$('#busy-panel').hidden=true;updateAvailability();}}
 }
 async function cancelGeneration(){if(cancelling||!generating)return;cancelling=true;let confirmed=false;const cancelledId=currentRequestId;requestSerial++;controller?.abort();controller=null;stopProgress();$('#busy-message').textContent='취소 완료 확인 중';updateAvailability();
-  try{const cancel=await fetch('/api/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:cancelledId})});if(!cancel.ok)throw Error();while(true){const response=await fetch('/api/progress?requestId='+encodeURIComponent(cancelledId));if(!response.ok)throw Error();const p=await response.json();if(!p.active){confirmed=true;break;}await new Promise(r=>setTimeout(r,500));}toast('생성 대기를 취소했습니다. 이미 시작된 생성에는 사용량이 반영될 수 있습니다.');}
+  try{const cancel=await apiFetch('/api/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:cancelledId})});if(!cancel.ok)throw Error();while(true){const response=await apiFetch('/api/progress?requestId='+encodeURIComponent(cancelledId));if(!response.ok)throw Error();const p=await response.json();if(!p.active){confirmed=true;break;}await new Promise(r=>setTimeout(r,500));}toast('생성 대기를 취소했습니다. 이미 시작된 생성에는 사용량이 반영될 수 있습니다.');}
   catch{toast('서버의 취소 완료를 확인하지 못했습니다. 연결 상태를 다시 확인해주세요.');}
   finally{cancelling=false;if(confirmed){generating=false;$('#busy-panel').hidden=true;$('[data-action="cancel-generation"]').textContent='생성 취소';}else{$('#busy-message').textContent='취소 완료 미확인';$('[data-action="cancel-generation"]').textContent='취소 상태 다시 확인';}updateAvailability();}
 }
@@ -310,7 +311,7 @@ function applyResult(){
   // Keep previous layers for recovery, hide them to avoid double-compositing transparent pixels.
   commit({...state,width:result.width,height:result.height,layers:[...state.layers.map(a=>({...a,visible:false})),l],active:l.id,selection:makeCanvas(result.width,result.height),protection:operation==='generate'?makeCanvas(result.width,result.height):state.protection},'결과를 적용했습니다. 이전 레이어는 숨김 상태로 보관했습니다.');
 }
-function exportPNG(){if(!state)return;const c=pending?pending.result:flatten();c.toBlob(blob=>{if(!blob){toast('PNG를 만들지 못했습니다.');return;}const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=`2026-10-28-${state.name.replace(/[<>:"/\\|?*]/g,'-')}-v1.4.1.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('PNG를 내보냈습니다. 원본 파일은 변경하지 않았습니다.');},'image/png');}
+function exportPNG(){if(!state)return;const c=pending?pending.result:flatten();c.toBlob(blob=>{if(!blob){toast('PNG를 만들지 못했습니다.');return;}const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=`2026-10-28-${state.name.replace(/[<>:"/\\|?*]/g,'-')}-v1.5.0.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('PNG를 내보냈습니다. 원본 파일은 변경하지 않았습니다.');},'image/png');}
 
 function sample(){
   if(locked())return;if(state&&!confirm('현재 작업을 샘플로 바꿀까요? 필요한 결과는 먼저 내보내세요.'))return;
@@ -380,15 +381,20 @@ document.addEventListener('keyup',e=>{if(e.code==='Space'){space=false;overlay.s
 window.addEventListener('blur',()=>{space=false;if(drag){state=drag.base;drag=null;render();}});
 window.addEventListener('beforeunload',e=>{if(pending||generating||(state&&history?.canUndo)){e.preventDefault();e.returnValue='';}});
 new ResizeObserver(()=>{if(state)view();}).observe(stage);
-async function checkConnection(force=false){
-  const button=$('[data-action="connection-info"]');button.textContent='연결 확인 중…';button.setAttribute('aria-busy','true');
-  try{const response=await fetch('/api/status'+(force?'?refresh=1':''));if(!response.ok)throw Error();const data=await response.json();connectionState=data;connected=!!data.connected;button.textContent=connected?(data.provider==='api'?'API 연결됨':'Codex 연결됨'):'연결 다시 확인';
-    $('#connection-badge').textContent=data.provider==='codex'?(data.usageLimited?'Codex 사용 제한':data.imageVerified?'Codex 이미지 사용 가능':connected?'Codex 로그인됨':data.installed?'Codex 로그인 필요':'Codex 설치 필요'):(connected?'API 키 설정됨':'API 미연결');
-    $('#connection-badge').classList.toggle('connected',connected);$('#connection-badge').title=data.imageVerified?'이 서버에서 이미지 결과 회수까지 성공했습니다.':'설치·로그인 확인이며, 실제 이미지 사용 가능 여부는 생성 시 검증합니다.';
-    $('.connection-caption').textContent=data.provider==='api'?'별도 API 과금':'ChatGPT 구독';$('.privacy-note').textContent=data.provider==='api'?'생성을 누르면 이미지가 OpenAI API로 전송되며 별도 API 비용이 발생합니다.':'생성을 누르면 필요한 이미지가 Codex를 통해 OpenAI로 전송되며 구독 사용량이 소모됩니다.';
+let connectionCheck=null;
+function updateAiControls(){const b=bridgeState();$('#ai-connect').textContent=b.phase==='connecting'?'AI를 연결하고 있습니다…':connected&&b.phase==='ready'?'AI 연결됨':b.phase==='ready'?'상태 확인':'AI 연결';$('#ai-connect').disabled=b.phase==='connecting'||(connected&&b.phase==='ready');$('#ai-disconnect').hidden=!b.hasSession&&b.phase!=='connecting';}
+function checkConnection(force=false){
+  if(connectionCheck)return connectionCheck;
+  connectionCheck=(async()=>{try{const response=await apiFetch('/api/status'+(force?'?refresh=1':''));if(!response.ok)throw Error();const data=await response.json();connectionState=data;connected=!!data.connected;
+    $('#connection-badge').textContent=data.usageLimited?'Codex 사용 제한':data.imageVerified?'Codex 이미지 사용 가능':connected?'Codex 로그인됨':data.installed?'Codex 로그인 필요':'Codex 설치 필요';$('#connection-badge').classList.toggle('connected',connected);
+    $('#connection-badge').title=data.imageVerified?'현재 브릿지에서 실제 이미지 실행을 확인했습니다.':'로그인 확인이며, 실제 이미지 도구·한도는 생성 시 확인합니다.';
+    $('.connection-caption').textContent='ChatGPT 구독';$('.privacy-note').textContent='생성을 누르면 이미지가 PC의 Codex를 통해 OpenAI로 전송되며 구독 사용량이 소모됩니다.';
     $('#codex-installed').textContent=data.installed?'설치됨 · '+(data.version||''):'설치 확인 필요';$('#codex-login').textContent=data.loggedIn?'ChatGPT 로그인됨':'ChatGPT 로그인 필요';$('#codex-image').textContent=data.imageVerified?'실제 이미지 실행 확인됨':'첫 생성에서 확인';
-  }catch{connected=false;button.textContent='연결 다시 확인';$('#connection-badge').textContent='서버 연결 오류';$('#connection-badge').classList.remove('connected');}finally{button.setAttribute('aria-busy','false');}updateAvailability();
+  }catch(error){connected=false;$('#connection-badge').title=error.message||'로컬 연결을 확인해주세요.';$('#connection-badge').textContent=bridgeState().hasSession?'AI 연결 끊김':'AI 연결 필요';$('#connection-badge').classList.remove('connected');for(const id of ['codex-installed','codex-login','codex-image'])$('#'+id).textContent='AI 연결 후 확인';}})().finally(()=>{connectionCheck=null;updateAvailability();updateAiControls();});return connectionCheck;
 }
+$('#ai-connect').addEventListener('click',async()=>{try{await connectBridge();await checkConnection();if(!connected)$('#connection-dialog').showModal();}catch(error){toast(error.message);if(!$('#connection-dialog').open)$('#connection-dialog').showModal();}finally{updateAiControls();}});
+$('#ai-disconnect').addEventListener('click',async()=>{if(generating){requestSerial++;controller?.abort();controller=null;generating=false;stopProgress();$('#busy-panel').hidden=true;}await disconnectBridge();connected=false;$('#connection-badge').textContent='AI 연결 해제됨';$('#connection-badge').classList.remove('connected');updateAvailability();updateAiControls();toast('AI 연결을 해제했습니다. 편집 내용은 유지됩니다.');});
+window.addEventListener('inpaint-ai-connection',event=>{updateAiControls();if(event.detail.phase==='ready')void checkConnection();else if(event.detail.phase==='error'||event.detail.phase==='idle'){connected=false;$('#connection-badge').textContent=event.detail.phase==='error'?'AI 연결 끊김':'AI 연결 필요';$('#connection-badge').classList.remove('connected');updateAvailability();}});
 $('#refresh-connection').addEventListener('click',async e=>{e.target.disabled=true;try{await checkConnection(true);}finally{e.target.disabled=false;}});
 
 

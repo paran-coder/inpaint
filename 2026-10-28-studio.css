@@ -80,3 +80,6 @@ select{font-size:12px;max-width:100%;padding:7px;color:#d5dfcd}
 
 /* v1.4.0: two primary tasks */
 .mode-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.mode-tabs button{white-space:normal;line-height:1.4;padding:10px 6px}
+
+/* v1.5.0 browser AI controls */
+#ai-connect{max-width:158px;font-size:12px}#ai-disconnect{padding:5px 7px;font-size:11px}.connection-status{flex-wrap:wrap}.connection-status .text-button{font-size:11px}#connection-dialog .outline-button{display:block;text-align:center;text-decoration:none}#connection-dialog p{line-height:1.7}

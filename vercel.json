@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "",
+  "installCommand": "",
+  "outputDirectory": ".",
+  "headers": [{
+    "source": "/(.*)",
+    "headers": [
+      {"key":"Cache-Control","value":"no-store"},
+      {"key":"Referrer-Policy","value":"no-referrer"},
+      {"key":"X-Content-Type-Options","value":"nosniff"},
+      {"key":"Content-Security-Policy","value":"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:4182 ws://127.0.0.1:4182 https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"}
+    ]
+  }]
+}
