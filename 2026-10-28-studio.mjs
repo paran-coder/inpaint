@@ -1,6 +1,6 @@
 import {apiFetch,connectBridge,disconnectBridge,bridgeState} from './2026-10-28-bridge-client.mjs';
 import {sessionStore} from './2026-10-28-storage.mjs';
-import {isAdditionRequest,fitAddition,overRGBA,blendRGBA,featherInside,History,requestGeometry,selectionClickIntent} from './2026-10-28-core.mjs';
+import {deleteIntent,resizeDimensions,isAdditionRequest,fitAddition,overRGBA,blendRGBA,featherInside,History,requestGeometry,selectionClickIntent} from './2026-10-28-core.mjs';
 import {removeBackground} from './2026-10-28-background.mjs';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -105,9 +105,9 @@ function renderLayers(){
   for(const l of [...state.layers].reverse()){
     const row=document.createElement('div');row.className='layer-item'+(l.id===state.active?' selected':'');row.tabIndex=0;row.setAttribute('role','button');row.setAttribute('aria-label',l.name+' 레이어 선택');
     const thumb=makeCanvas(60,48),ctx=thumb.getContext('2d');const s=Math.min(60/l.bitmap.width,48/l.bitmap.height);ctx.drawImage(l.bitmap,(60-l.bitmap.width*s)/2,(48-l.bitmap.height*s)/2,l.bitmap.width*s,l.bitmap.height*s);row.append(thumb);
-    const label=document.createElement('div'),name=document.createElement('strong'),detail=document.createElement('small');name.textContent=l.name;detail.textContent=l.empty?'빈 레이어 · 이미지 불러오기':`${l.bitmap.width} × ${l.bitmap.height} · ${Math.round(l.opacity*100)}%`;label.append(name,detail);row.append(label);
+    const label=document.createElement('div'),name=document.createElement('strong'),detail=document.createElement('small');name.textContent=l.name;detail.textContent=l.empty?'빈 레이어 · 이미지 불러오기':`${Math.round(l.width)} × ${Math.round(l.height)} · ${Math.round(l.opacity*100)}%`;label.append(name,detail);row.append(label);
     const eye=document.createElement('button');eye.textContent=l.visible?'◉':'○';eye.title=l.visible?'레이어 숨기기':'레이어 표시';eye.setAttribute('aria-label',`${l.name} ${l.visible?'숨기기':'표시'}`);eye.addEventListener('click',e=>{e.stopPropagation();if(locked())return;commit({...state,layers:state.layers.map(a=>a.id===l.id?{...a,visible:!a.visible}:a)});});row.append(eye);
-    const select=()=>{if(locked())return;state={...state,active:l.id};render();};row.addEventListener('click',select);row.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}});container.append(row);
+    const select=()=>{if(locked())return;tool='move';state={...state,active:l.id};render();$('#layers').focus({preventScroll:true});};row.addEventListener('click',select);row.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();select();}});container.append(row);
   }
 }
 function render(){
@@ -126,7 +126,7 @@ function render(){
   const n=state?countMask(state.selection):0;$('#selection-count').textContent=n?`선택 ${n.toLocaleString()} px`:'선택 영역 없음';
   const l=active();$('#layer-settings').hidden=!l;
   $('#layer-import').hidden=!l?.empty;
-  if(l){$('#opacity').value=l.opacity*100;$('#opacity-value').textContent=Math.round(l.opacity*100)+'%';$('#layer-x').value=Math.round(l.x);$('#layer-y').value=Math.round(l.y);$('#layer-width').value=Math.round(l.width);$('#layer-rotation').value=Math.round(l.rotation);}
+  if(l){$('#opacity').value=l.opacity*100;$('#opacity-value').textContent=Math.round(l.opacity*100)+'%';$('#layer-x').value=Math.round(l.x);$('#layer-y').value=Math.round(l.y);$('#layer-width').value=Math.round(l.width);$('#layer-height').value=Math.round(l.height);$('#layer-rotation').value=Math.round(l.rotation);}
   renderLayers();drawCanvas();view();updateAvailability();overlay.style.cursor=tool==='move'?'move':['brush','erase','restore','protect'].includes(tool)?'none':'crosshair';
   $('.brush-option').hidden=!['brush','erase','restore','protect'].includes(tool);$('.selection-mode').hidden=!['brush','rect','lasso','protect'].includes(tool);
 }
@@ -319,7 +319,7 @@ function applyResult(){
   // Keep previous layers for recovery, hide them to avoid double-compositing transparent pixels.
   commit({...state,width:result.width,height:result.height,layers:[...state.layers.map(a=>({...a,visible:false})),l],active:l.id,selection:makeCanvas(result.width,result.height),protection:operation==='generate'?makeCanvas(result.width,result.height):state.protection},'결과를 적용했습니다. 이전 레이어는 숨김 상태로 보관했습니다.');
 }
-function exportPNG(){if(!state)return;const c=pending?pending.result:flatten();c.toBlob(blob=>{if(!blob){toast('PNG를 만들지 못했습니다.');return;}const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=`2026-10-28-${state.name.replace(/[<>:"/\\|?*]/g,'-')}-v1.5.1.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('PNG를 내보냈습니다. 원본 파일은 변경하지 않았습니다.');},'image/png');}
+function exportPNG(){if(!state)return;const c=pending?pending.result:flatten();c.toBlob(blob=>{if(!blob){toast('PNG를 만들지 못했습니다.');return;}const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=`2026-10-28-${state.name.replace(/[<>:"/\\|?*]/g,'-')}-v1.5.2.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('PNG를 내보냈습니다. 원본 파일은 변경하지 않았습니다.');},'image/png');}
 
 function sample(){
   if(locked())return;if(state&&!confirm('현재 작업을 샘플로 바꿀까요? 필요한 결과는 먼저 내보내세요.'))return;
@@ -342,7 +342,7 @@ function sample(){
 
 const actions={
   'connection-info':()=>$('#connection-dialog').showModal(),
-  open:()=>{if(!locked())$('#open-input').click();},add:()=>{if(!locked())$('#add-input').click();},new:()=>{if(!locked())$('#new-dialog').showModal();},sample,export:exportPNG,help:()=>$('#help-dialog').showModal(),
+  open:()=>{if(!locked())$('#open-input').click();},add:()=>{if(!locked())$('#add-input').click();},new:()=>{if(!locked())$('#new-dialog').showModal();},sample,export:exportPNG,help:()=>window.open('/2026-10-28-user-manual.html','_blank','noopener'),
   'new-layer':()=>{if(locked())return;if(!state){initialize(makeCanvas(1024,1024),'새 캔버스',false,undefined,true);$('#edit-intent').value='add';selectMode('edit');return;}const l=layer(blankMask(),`레이어 ${serial+1}`,{empty:true});$('#edit-intent').value='add';selectMode('edit');commit({...state,layers:[...state.layers,l],active:l.id},null,'빈 레이어 추가');},
   'import-layer':()=>{if(locked())return;if(!state||!active()?.empty)actions['new-layer']();importTarget=state.active;$('#add-input').click();},
   undo:()=>{if(history&&!locked()){state=history.undo();revision++;render();}},redo:()=>{if(history&&!locked()){state=history.redo();revision++;render();}},
@@ -366,9 +366,9 @@ $('#feather').addEventListener('input',e=>$('#feather-value').textContent=e.targ
 $('#tolerance').addEventListener('input',e=>$('#tolerance-value').textContent=e.target.value);
 $('#opacity').addEventListener('input',e=>{if(!active()||locked())return;updateLayer({opacity:Number(e.target.value)/100});$('#opacity-value').textContent=e.target.value+'%';drawCanvas();});
 $('#opacity').addEventListener('change',()=>{if(state&&!locked())commit(state,null,'불투명도 변경');});
-for(const [id,key] of [['layer-x','x'],['layer-y','y'],['layer-width','width'],['layer-rotation','rotation']])$('#'+id).addEventListener('change',e=>{
-  const l=active();if(!l||locked())return;const n=Number(e.target.value);if(!Number.isFinite(n)||Math.abs(n)>8192||(key==='width'&&n<1)){toast('올바른 범위의 숫자를 입력해주세요.');render();return;}
-  updateLayer(key==='width'?{width:n,height:l.height*n/l.width}:{[key]:n});commit();
+for(const [id,key] of [['layer-x','x'],['layer-y','y'],['layer-width','width'],['layer-height','height'],['layer-rotation','rotation']])$('#'+id).addEventListener('change',e=>{
+  const l=active();if(!l||locked())return;const n=Number(e.target.value);if(!Number.isFinite(n)||Math.abs(n)>8192||(['width','height'].includes(key)&&n<1)){toast('올바른 범위의 숫자를 입력해주세요.');render();return;}
+  try{updateLayer(['width','height'].includes(key)?resizeDimensions(l,key,n,$('#aspect-lock').checked):{[key]:n});commit(state,null,'이미지 크기·위치 변경');}catch(error){toast(error.message);render();}
 });
 $('#bg-engine').addEventListener('change',e=>$('#bg-help').textContent=e.target.value==='portrait'?'인물용 MODNet · 최초 약 26MB와 실행 라이브러리 다운로드. 실행 시 브라우저에 캐시되며, 사진은 업로드하지 않습니다.':'단색 모드는 테두리에 연결된 비슷한 색만 지웁니다. 복잡한 배경은 수동으로 보정하세요.');
 $('#remove-bg').addEventListener('click',removeBg);$('#generate').addEventListener('click',generate);
@@ -380,7 +380,7 @@ document.addEventListener('keydown',e=>{
   if(e.code==='Space'){space=true;e.preventDefault();overlay.style.cursor='grab';return;}
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();actions[e.shiftKey?'redo':'undo']();return;}
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();exportPNG();return;}
-  if(e.key==='Delete'||e.key==='Backspace'){if(state){e.preventDefault();if(countMask(state.selection))selectionErase();else actions['delete-layer']();}return;}
+  if(e.key==='Delete'||e.key==='Backspace'){if(state){e.preventDefault();if(deleteIntent(!!e.target.closest('#layers'),!!countMask(state.selection))==='selection')selectionErase();else actions['delete-layer']();}return;}
   if((e.code==='BracketLeft'||e.code==='BracketRight')&&['brush','erase','restore','protect'].includes(tool)){e.preventDefault();brushSize(Number($('#brush-size').value)+(e.code==='BracketRight'?10:-10));return;}
   const keys={v:'move',b:'brush',m:'rect',l:'lasso',e:'erase',r:'restore',p:'protect'};if(keys[e.key.toLowerCase()])setTool(keys[e.key.toLowerCase()]);
   if(e.key.toLowerCase()==='o')actions.open();if(e.key==='Escape'&&!generating){if(pending)actions['discard-result']();else actions['clear-selection']();}

@@ -1,4 +1,12 @@
 // Pure image operations. Masks are one byte per pixel, 255 means editable.
+export function deleteIntent(layerFocus,hasSelection){return layerFocus||!hasSelection?'layer':'selection';}
+export function resizeDimensions(layer,key,value,locked=true){
+  if(!['width','height'].includes(key)||!Number.isFinite(value)||value<1||value>8192)throw Error('크기는 1~8192 px 범위로 입력해주세요.');
+  const ratio=value/layer[key],other=key==='width'?'height':'width';
+  const result={[key]:value,[other]:locked?layer[other]*ratio:layer[other]};
+  if(result[other]<1||result[other]>8192)throw Error('비율을 유지한 크기가 허용 범위를 벗어납니다.');
+  return {width:result.width,height:result.height};
+}
 export function isAdditionRequest(prompt){
   const text=prompt.replace(/(?:추가|넣지|배치)(?:하지\s*|하진\s*)?(?:말고|말아|마세요|마|않\S*)/g,'').replace(/\b(?:do not|don't|never)\s+(?:add|insert|place)\b/gi,'');
   return /추가|넣어|넣고|배치해|\b(?:add|insert|place)\b/i.test(text);
