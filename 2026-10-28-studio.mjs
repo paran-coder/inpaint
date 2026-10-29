@@ -48,6 +48,16 @@ function point(e){const b=overlay.getBoundingClientRect();return {x:(e.clientX-b
 function localPoint(l,p){const r=-l.rotation*Math.PI/180,dx=p.x-l.x-l.width/2,dy=p.y-l.y-l.height/2;return {x:((dx*Math.cos(r)-dy*Math.sin(r))+l.width/2)*l.bitmap.width/l.width,y:((dx*Math.sin(r)+dy*Math.cos(r))+l.height/2)*l.bitmap.height/l.height};}
 function worldPoint(l,x,y){const r=l.rotation*Math.PI/180;return {x:l.x+l.width/2+x*Math.cos(r)-y*Math.sin(r),y:l.y+l.height/2+x*Math.sin(r)+y*Math.cos(r)};}
 function layerCorners(l){return [[-1,-1],[1,-1],[1,1],[-1,1]].map(([a,b])=>worldPoint(l,a*l.width/2,b*l.height/2));}
+function transformHit(l,p){
+  if(!l?.visible||l.contextPatch)return {type:'move',cursor:'move'};
+  const corners=layerCorners(l),corner=corners.findIndex(a=>Math.hypot(a.x-p.x,a.y-p.y)<12/zoom);
+  if(corner>=0){
+    const a=corners[corner],angle=((Math.atan2(a.y-l.y-l.height/2,a.x-l.x-l.width/2)*180/Math.PI)%180+180)%180;
+    return {type:'resize',cursor:['ew-resize','nwse-resize','ns-resize','nesw-resize'][Math.round(angle/45)%4]};
+  }
+  const rot=worldPoint(l,0,-l.height/2-28/zoom);
+  return Math.hypot(rot.x-p.x,rot.y-p.y)<12/zoom?{type:'rotate',cursor:'grab'}:{type:'move',cursor:'move'};
+}
 function selectionPath(mask){
   if(contourCache.has(mask))return contourCache.get(mask);
   const data=alpha(mask),w=mask.width,h=mask.height,p=new Path2D(),edges=new Map(),stride=w+1;
@@ -62,6 +72,11 @@ function selectionPath(mask){
   contourCache.set(mask,p);return p;
 }
 function updateCursor(){
+  if(space)overlay.style.cursor=drag?.type==='pan'?'grabbing':'grab';
+  else if(tool==='move'){
+    const hit=state&&cursorPosition?transformHit(active(),point({clientX:cursorPosition.x,clientY:cursorPosition.y})):null;
+    overlay.style.cursor=drag?.type==='rotate'?'grabbing':drag?.cursor||hit?.cursor||'move';
+  }else overlay.style.cursor=['brush','erase','restore','protect'].includes(tool)?'none':'crosshair';
   const visible=state&&cursorPosition&&['brush','erase','restore','protect'].includes(tool)&&!space&&!pending&&!generating&&!processing;
   brushCursor.hidden=!visible;if(!visible)return;
   const b=stage.getBoundingClientRect(),size=Number($('#brush-size').value)*zoom;
@@ -169,7 +184,7 @@ function render(){
   const l=active();$('#layer-settings').hidden=!l;
   $('#layer-import').hidden=!l?.empty;$('#harmonize-controls').hidden=!l||l.empty||l.contextPatch;$('#local-harmonize').disabled=!hasBackdrop()||processing||generating||!!pending;$('#ai-harmonize').disabled=!hasBackdrop()||processing||generating||!!pending;for(const id of ['layer-x','layer-y','layer-width','layer-height','layer-rotation'])$('#'+id).disabled=!!l?.contextPatch;
   if(l){$('#opacity').value=l.opacity*100;$('#opacity-value').textContent=Math.round(l.opacity*100)+'%';$('#layer-x').value=Math.round(l.x);$('#layer-y').value=Math.round(l.y);$('#layer-width').value=Math.round(l.width);$('#layer-height').value=Math.round(l.height);$('#layer-rotation').value=Math.round(l.rotation);}
-  renderLayers();drawCanvas();view();updateAvailability();overlay.style.cursor=tool==='move'?'move':['brush','erase','restore','protect'].includes(tool)?'none':'crosshair';
+  renderLayers();drawCanvas();view();updateAvailability();updateCursor();
   $('.brush-option').hidden=!['brush','erase','restore','protect'].includes(tool);$('.selection-mode').hidden=!['brush','rect','lasso','protect'].includes(tool);
 }
 function locked(){if(processing||generating||pending){toast('현재 작업을 완료하거나 취소한 후 편집해주세요.');return true;}return false;}
@@ -208,8 +223,7 @@ overlay.addEventListener('pointerdown',e=>{
   }
   if(tool==='move'){
     if(!l||l.contextPatch){drag=null;return;}
-    const corners=layerCorners(l),corner=corners.findIndex(a=>Math.hypot(a.x-p.x,a.y-p.y)<12/zoom);
-    const rot=worldPoint(l,0,-l.height/2-28/zoom);drag.type=corner>=0?'resize':Math.hypot(rot.x-p.x,rot.y-p.y)<12/zoom?'rotate':'move';drag.layer=l;if(drag.type!=='move')drag.selectionClick=null;
+    const hit=transformHit(l,p);drag.type=hit.type;drag.cursor=hit.cursor;drag.layer=l;if(drag.type!=='move')drag.selectionClick=null;updateCursor();
     drag.distance=Math.hypot(p.x-l.x-l.width/2,p.y-l.y-l.height/2);drag.angle=Math.atan2(p.y-l.y-l.height/2,p.x-l.x-l.width/2);return;
   }
   if(['rect','lasso'].includes(tool)){drag.type='shape';drag.shape={start:p,end:p};drag.points=[p];return;}
