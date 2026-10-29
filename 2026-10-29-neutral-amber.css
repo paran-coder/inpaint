@@ -95,3 +95,16 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .manual-content section,.manual-content td,.manual-content th{border-color:#393939}.manual-content p,.manual-content li{color:#c4c4c4}.manual-content strong,.manual-content th{color:#f2f2f2}
 .manual-content a{color:#e3b341}.manual-content kbd{border-color:#686868;color:#c4c4c4}.manual-note{background:#242424;border-left-color:#686868}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}
+/* v1.7.1: aligned file actions, inline contextual help, two connection controls. */
+.header-actions>.manual-link,.header-actions>button{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:36px;min-height:36px;padding:0 12px;line-height:1;font-size:13px;vertical-align:middle;white-space:nowrap}
+.header-actions{align-items:center;gap:8px}
+.setting-title{display:inline-flex;align-items:center;gap:6px;min-width:0;flex-shrink:0}
+.setting-title .context-help{margin-left:0}.section-heading h2,.transform-heading{gap:6px}
+.section-heading h2 .context-help,.transform-heading .context-help{margin-left:0}
+.setting-row{gap:10px}.setting-row>select{min-width:0;max-width:70%}
+.count{padding:0;border:0;background:transparent;color:#929292;font-size:12px;font-weight:400}
+.ai-section>.section-heading{gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.ai-section>.section-heading h2{white-space:nowrap;margin-right:auto}
+.ai-connection-actions{display:flex;align-items:center;gap:6px}
+.ai-connection-actions button{min-height:34px;padding:7px 9px;font-size:12px;white-space:nowrap}
+@media(max-width:500px){.topbar{padding:0 8px;gap:6px}.header-actions{gap:4px}.header-actions>.manual-link,.header-actions>button{height:34px;min-height:34px;font-size:10px;padding:0 6px}}

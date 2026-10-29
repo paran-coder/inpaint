@@ -5,6 +5,7 @@ import {layerCommand,recoverCheckerboard,deleteIntent,resizeDimensions,isAdditio
 import {removeBackground} from './2026-10-28-background.mjs';
 import {renderLayer,renderedBitmap,maskRGBA,retainNativeAlpha,IDENTITY_QUAD,quadMatrix,invertMatrix,mapPoint} from './2026-10-29-layer-effects.mjs';
 import {mountEditorTools} from './2026-10-29-editor-tools.mjs';
+import {paintConnectionControls} from './2026-10-29-connection-ui.mjs';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const canvas=$('#canvas'),overlay=$('#overlay'),stage=$('#stage'),frame=$('#canvas-frame');
@@ -120,7 +121,7 @@ function updateAvailability(){
   $('#edit-intent').disabled=processing||generating||!!pending;
   const has=!!state,selection=has&&countMask(state.selection)>0;
   $('#generate').disabled=!connected||processing||generating||!!pending||(!has&&mode!=='generate')||(mode==='edit'&&!selection)||(mode==='composite'&&!hasBackdrop());
-  $('#generation-help').textContent=generating?'Codex 생성 중입니다. 결과가 도착하면 비교할 수 있습니다.':!connected?(connectionState?.provider==='api'?'API 연결 설정을 확인해주세요.':'AI 연결을 누르거나 연결 도움말에서 Codex 상태를 확인해주세요.'):connectionState?.usageLimited?'구독 사용 제한입니다. 해제 후 다시 시도하거나 연결 상태를 다시 확인해주세요.':mode==='edit'&&!selection?'브러시·사각형·올가미로 수정할 영역을 선택해주세요.':mode==='composite'?'배치 후 실행 · 대상 주변도 보정하며 추가 AI 사용량이 소모됩니다.':'결과를 확인한 후 적용할 수 있습니다.';
+  $('#generation-help').textContent=generating?'Codex 생성 중입니다. 결과가 도착하면 비교할 수 있습니다.':!connected?(connectionState?.provider==='api'?'API 연결 설정을 확인해주세요.':'AI 연결을 눌러 연결 상태를 확인해주세요.'):connectionState?.usageLimited?'구독 사용 제한입니다. 해제 후 다시 시도하거나 연결 상태를 다시 확인해주세요.':mode==='edit'&&!selection?'브러시·사각형·올가미로 수정할 영역을 선택해주세요.':mode==='composite'?'배치 후 실행 · 대상 주변도 보정하며 추가 AI 사용량이 소모됩니다.':'결과를 확인한 후 적용할 수 있습니다.';
   $('#remove-bg').disabled=!active()||active().empty||active().contextPatch||processing||generating||!!pending;
   $$('[data-action="undo"]').forEach(b=>b.disabled=!history?.canUndo||processing||generating||!!pending);
   $$('[data-action="redo"]').forEach(b=>b.disabled=!history?.canRedo||processing||generating||!!pending);
@@ -167,7 +168,7 @@ document.addEventListener('pointercancel',cancelLayerDrag);window.addEventListen
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&layerPointer){cancelLayerDrag();e.preventDefault();e.stopImmediatePropagation();}});
 
 function renderLayers(){
-  $('#layer-count').textContent=state?.layers.length||0;
+  $('#layer-count').textContent=`(${state?.layers.length||0})`;
   const container=$('#layers');container.replaceChildren();
   if(!state){const empty=document.createElement('div');empty.className='empty-layers';empty.textContent='이미지를 열면 레이어가 여기에 표시됩니다.';container.append(empty);return;}
   for(const l of [...state.layers].reverse()){
@@ -380,7 +381,7 @@ async function generate(){
   }
   $('#busy-message').textContent='연결 확인 및 전송 중';
     const response=await apiFetch('/api/image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal});
-    const body=await response.json();if(!response.ok){if(body.code==='USAGE_LIMIT'){connectionState={...connectionState,usageLimited:true};$('#connection-badge').textContent='Codex 사용 제한';$('#generation-help').textContent='구독 사용 제한입니다. 제한 해제 후 다시 시도해주세요.';}throw Error(body.error||'이미지를 생성하지 못했습니다.');}
+    const body=await response.json();if(!response.ok){if(body.code==='USAGE_LIMIT'){connectionState={...connectionState,usageLimited:true};updateAiControls();$('#generation-help').textContent='구독 사용 제한입니다. 제한 해제 후 다시 시도해주세요.';}throw Error(body.error||'이미지를 생성하지 못했습니다.');}
     if(body.imageVerified)checkConnection();if(body.timings){const t=body.timings;$('#generation-timing').hidden=false;$('#generation-timing').textContent=`최근 생성 ${(t.totalMs/1000).toFixed(1)}초 · Codex ${(t.codexMs/1000).toFixed(1)}초 · 결과 회수 ${(t.retrievalMs/1000).toFixed(1)}초`;}
     stopProgress();$('#busy-message').textContent='결과 처리 중';const image=await imageFromURL(body.image);
     if(id!==requestSerial||rev!==revision)return;
@@ -492,20 +493,21 @@ document.addEventListener('keyup',e=>{if(e.code==='Space'){space=false;overlay.s
 window.addEventListener('blur',()=>{space=false;if(drag){state=drag.base;drag=null;render();}});
 window.addEventListener('beforeunload',e=>{if(pending||generating||(state&&history?.canUndo)){e.preventDefault();e.returnValue='';}});
 new ResizeObserver(()=>{if(state)view();}).observe(stage);
+// Build fragment for the static web editor. Uses that editor's existing bridge client.
 let connectionCheck=null;
-function updateAiControls(){const b=bridgeState();$('#ai-connect').textContent=b.phase==='connecting'?'AI를 연결하고 있습니다…':connected&&b.phase==='ready'?'AI 연결됨':b.phase==='ready'?'상태 확인':'AI 연결';$('#ai-connect').disabled=b.phase==='connecting'||(connected&&b.phase==='ready');$('#ai-disconnect').hidden=!b.hasSession&&b.phase!=='connecting';}
+function updateAiControls(){const b=bridgeState();paintConnectionControls({...b,phase:b.phase==='connecting'?b.phase:connectionState?.error?'error':b.phase,connected,usageLimited:connectionState?.usageLimited,hint:connectionState?.error|| (connectionState?.usageLimited?'구독 사용 제한입니다. 잠시 후 다시 확인하세요.':connected?'AI 연결됨':b.phase==='error'?'AI 연결 오류입니다. 다시 연결해 상태를 확인하세요.':'이 컴퓨터의 AI에 연결합니다.')});}
 function checkConnection(force=false){
   if(connectionCheck)return connectionCheck;
-  connectionCheck=(async()=>{try{const response=await apiFetch('/api/status'+(force?'?refresh=1':''));if(!response.ok)throw Error();const data=await response.json();connectionState=data;connected=!!data.connected;
-    $('#connection-badge').textContent=data.usageLimited?'Codex 사용 제한':data.imageVerified?'Codex 이미지 사용 가능':connected?'Codex 로그인됨':data.installed?'Codex 로그인 필요':'Codex 설치 필요';$('#connection-badge').classList.toggle('connected',connected);
-    $('#connection-badge').title=data.imageVerified?'현재 브릿지에서 실제 이미지 실행을 확인했습니다.':'로그인 확인이며, 실제 이미지 도구·한도는 생성 시 확인합니다.';
-    $('.connection-caption').textContent='ChatGPT 구독';
+  connectionCheck=(async()=>{try{
+    const response=await apiFetch('/api/status'+(force?'?refresh=1':''));if(!response.ok)throw Error();const data=await response.json();if(!bridgeState().hasSession||bridgeState().phase!=='ready')return;connectionState=data;connected=!!data.connected;
     $('#codex-installed').textContent=data.installed?'설치됨 · '+(data.version||''):'설치 확인 필요';$('#codex-login').textContent=data.loggedIn?'ChatGPT 로그인됨':'ChatGPT 로그인 필요';$('#codex-image').textContent=data.imageVerified?'실제 이미지 실행 확인됨':'첫 생성에서 확인';
-  }catch(error){connected=false;$('#connection-badge').title=error.message||'로컬 연결을 확인해주세요.';$('#connection-badge').textContent=bridgeState().hasSession?'AI 연결 끊김':'AI 연결 필요';$('#connection-badge').classList.remove('connected');for(const id of ['codex-installed','codex-login','codex-image'])$('#'+id).textContent='AI 연결 후 확인';}})().finally(()=>{connectionCheck=null;updateAvailability();updateAiControls();});return connectionCheck;
+  }catch(error){connected=false;connectionState=bridgeState().hasSession?{error:error.message||'AI 연결 상태를 확인하지 못했습니다.'}:null;for(const id of ['codex-installed','codex-login','codex-image'])$('#'+id).textContent='AI 연결 후 확인';}
+  })().finally(()=>{connectionCheck=null;updateAvailability();updateAiControls();});return connectionCheck;
 }
-$('#ai-connect').addEventListener('click',async()=>{try{await connectBridge();await checkConnection();if(!connected)$('#connection-dialog').showModal();}catch(error){toast(error.message);if(!$('#connection-dialog').open)$('#connection-dialog').showModal();}finally{updateAiControls();}});
-$('#ai-disconnect').addEventListener('click',async()=>{if(generating){requestSerial++;controller?.abort();controller=null;generating=false;stopProgress();$('#busy-panel').hidden=true;}await disconnectBridge();connected=false;$('#connection-badge').textContent='AI 연결 해제됨';$('#connection-badge').classList.remove('connected');updateAvailability();updateAiControls();toast('AI 연결을 해제했습니다. 편집 내용은 유지됩니다.');});
-window.addEventListener('inpaint-ai-connection',event=>{updateAiControls();if(event.detail.phase==='ready')void checkConnection();else if(event.detail.phase==='error'||event.detail.phase==='idle'){connected=false;$('#connection-badge').textContent=event.detail.phase==='error'?'AI 연결 끊김':'AI 연결 필요';$('#connection-badge').classList.remove('connected');updateAvailability();}});
+$('#ai-connect').addEventListener('click',async()=>{try{await connectBridge();await connectionCheck;await checkConnection(true);if(!connected||connectionState?.usageLimited)$('#connection-dialog').showModal();}catch(error){toast(error.message);if(!$('#connection-dialog').open)$('#connection-dialog').showModal();}finally{updateAiControls();}});
+$('#ai-disconnect').addEventListener('click',async()=>{try{if(generating){requestSerial++;controller?.abort();controller=null;generating=false;stopProgress();$('#busy-panel').hidden=true;}await disconnectBridge();connected=false;connectionState=null;toast('AI 연결을 해제했습니다. 편집 내용은 유지됩니다.');}catch(error){toast(error.message||'AI 연결 해제를 확인하지 못했습니다.');}finally{updateAvailability();updateAiControls();}});
+window.addEventListener('inpaint-ai-connection',event=>{if(event.detail.phase==='ready')void checkConnection();else if(event.detail.phase==='error'||event.detail.phase==='idle'){connected=false;updateAvailability();}updateAiControls();});
+
 $('#refresh-connection').addEventListener('click',async e=>{e.target.disabled=true;try{await checkConnection(true);}finally{e.target.disabled=false;}});
 
 
