@@ -76,7 +76,7 @@ export function mountEditorTools(api){
   for(const axis of ['width','height'])$('#export-'+axis).onchange=()=>{if($('#export-lock').checked&&exportSource){const other=axis==='width'?'height':'width';$('#export-'+other).value=Math.max(1,Math.round(Number($('#export-'+axis).value)*exportSource[other]/exportSource[axis]));}exportPreview();};
   const closeExport=()=>{$('#export-dialog').close();exportRevision++;exportBlob=null;exportSource=null;$('#export-preview').removeAttribute('src');if(exportURL)URL.revokeObjectURL(exportURL);exportURL=null;};
   $('#export-cancel').onclick=closeExport;$('#export-dialog').addEventListener('cancel',e=>{e.preventDefault();closeExport();});
-  $('#export-save').onclick=()=>{if(!exportBlob)return;const a=document.createElement('a'),url=URL.createObjectURL(exportBlob);a.href=url;a.download=`2026-10-29-${api.doc().name.replace(/[<>:"/\\|?*]/g,'-')}-v1.6.1.${$('#export-format').value}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);closeExport();};
+  $('#export-save').onclick=()=>{if(!exportBlob)return;const a=document.createElement('a'),url=URL.createObjectURL(exportBlob);a.href=url;a.download=`2026-10-29-${api.doc().name.replace(/[<>:"/\\|?*]/g,'-')}-v1.6.2.${$('#export-format').value}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);closeExport();};
   return {
     openExport(){exportSource=api.flatten();if(!exportSource)return;$('#export-width').value=exportSource.width;$('#export-height').value=exportSource.height;$('#export-dialog').showModal();exportPreview();},
     sync(){

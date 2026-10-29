@@ -514,7 +514,12 @@ function updateRecovery(){
   const show=!!savedSession&&!state&&!recoveryDismissed;
   $('#session-recovery').hidden=!show;$('#restore-session').hidden=!show;$('#welcome').hidden=!!state||show;
 }
-$('#start-fresh').addEventListener('click',()=>{if(locked())return;recoveryDismissed=true;updateRecovery();$('#save-status').textContent='새 작업을 시작하세요.';$('#welcome [data-action="open"]').focus({preventScroll:true});});
+$('#start-fresh').addEventListener('click',async()=>{
+  if(state||locked())return;restoring=true;clearTimeout(saveTimer);processing=true;updateAvailability();
+  try{await saveQueue.catch(()=>{});await sessionStore(null);savedSession=null;recoveryDismissed=true;updateRecovery();$('#save-status').textContent='이전 자동 저장 작업을 삭제했습니다.';$('#welcome [data-action="open"]').focus({preventScroll:true});}
+  catch{toast('저장된 작업을 삭제하지 못했습니다. 다시 시도해주세요.');$('#save-status').textContent='자동 저장 작업 삭제 실패';}
+  finally{processing=false;restoring=false;updateRecovery();updateAvailability();}
+});
 function canvasBlob(c){return new Promise((resolve,reject)=>c.toBlob(b=>b?resolve(b):reject(Error('이미지 저장 실패')),'image/png'));}
 async function packDocument(doc){return {...doc,selection:await canvasBlob(doc.selection),protection:await canvasBlob(doc.protection),layers:await Promise.all(doc.layers.map(async l=>({...l,bitmap:await canvasBlob(l.bitmap),original:await canvasBlob(l.original),mask:l.mask?await canvasBlob(l.mask):null})))};}
 async function unpackCanvas(blob){const image=await createImageBitmap(blob);const c=makeCanvas(image.width,image.height);c.getContext('2d').drawImage(image,0,0);image.close();return c;}
