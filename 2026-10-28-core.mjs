@@ -7,10 +7,10 @@ export function layerCommand(doc,command,p={}){
     const changes=p.changes||{},keys=Object.keys(changes);
     if(!keys.length||keys.some(k=>!['x','y','width','height','rotation'].includes(k)||!Number.isFinite(changes[k])||(['width','height'].includes(k)&&changes[k]<=0)))return doc;
     if(keys.every(k=>source[k]===changes[k]))return doc;
-    return {...doc,layers:doc.layers.map(l=>l.id===source.id?{...l,...changes}:l)};
+    return {...doc,layers:doc.layers.map(l=>l.id===source.id?{...l,...changes}:l.contextPatch&&l.sourceLayerId===source.id?{...l,visible:false}:l)};
   }
   if(command==='delete'){
-    const layers=doc.layers.filter(l=>l.id!==source.id);
+    const layers=doc.layers.filter(l=>l.id!==source.id).map(l=>l.contextPatch&&l.sourceLayerId===source.id?{...l,visible:false}:l);
     return {...doc,layers,active:doc.active===source.id?layers.at(-1)?.id:doc.active};
   }
   if(command!=='moveTo'||source.id===p.target||!['above','below'].includes(p.position))return doc;

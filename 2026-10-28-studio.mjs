@@ -1,3 +1,4 @@
+import {matchColorRGBA,blendSubjectEdges,contextOverlay} from './2026-10-28-harmonize.mjs';
 import {apiFetch,connectBridge,disconnectBridge,bridgeState} from './2026-10-28-bridge-client.mjs';
 import {sessionStore} from './2026-10-28-storage.mjs';
 import {layerCommand,recoverCheckerboard,deleteIntent,resizeDimensions,isAdditionRequest,fitAddition,overRGBA,blendRGBA,featherInside,History,requestGeometry,selectionClickIntent} from './2026-10-28-core.mjs';
@@ -17,7 +18,7 @@ const contourCache=new WeakMap();
 const brushCursor=document.createElement('div');brushCursor.id='brush-cursor';brushCursor.hidden=true;brushCursor.setAttribute('aria-hidden','true');stage.append(brushCursor);overlay.tabIndex=0;
 const modeCopy={
   edit:{title:'어떻게 바꿀까요?',placeholder:'예: 선택한 부분을 따뜻한 햇살이 드는 창문으로 바꿔줘.',action:'선택 영역 수정',hint:'수정할 영역을 선택하고 변경할 내용을 입력하세요.',chips:[['물체 지우기','선택한 물체를 지우고 주변 배경으로 자연스럽게 채워줘.'],['식물 추가','선택한 부분에 자연스러운 초록 식물을 추가해줘.'],['조명 바꾸기','선택한 부분을 따뜻한 조명으로 바꿔줘.']]},
-  composite:{title:'장면에 어떻게 어우러질까요?',placeholder:'예: 배치한 제품의 색감과 조명을 배경에 맞추고 바닥에 부드러운 그림자를 더해줘.',action:'자연스럽게 합성',hint:'이미지를 불러와 배치한 뒤 바로 합성하세요.',chips:[['조명 맞추기','배치한 이미지의 조명 방향과 색온도를 배경에 맞춰줘.'],['그림자 추가','배치한 대상 아래에 자연스러운 접지 그림자를 더해줘.'],['색감 통일','배치한 대상과 배경의 색감과 대비를 자연스럽게 맞춰줘.']]},
+  composite:{title:'장면에 어떻게 어우러질까요?',placeholder:'예: 배치한 제품의 색감과 조명을 배경에 맞추고 바닥에 부드러운 그림자를 더해줘.',action:'배경과 어우르기',hint:'이미지를 불러와 배치한 뒤 바로 합성하세요.',chips:[['조명 맞추기','배치한 이미지의 조명 방향과 색온도를 배경에 맞춰줘.'],['그림자 추가','배치한 대상 아래에 자연스러운 접지 그림자를 더해줘.'],['색감 통일','배치한 대상과 배경의 색감과 대비를 자연스럽게 맞춰줘.']]},
   generate:{title:'어떤 장면을 만들까요?',placeholder:'예: 아침 햇살이 비치는 미니멀한 거실 장면. 크림색 벽과 초록색 소파, 자연스러운 사진.',action:'새 이미지 생성',hint:'선택 영역 없이 새로운 이미지를 만듭니다.',chips:[['제품 사진','부드러운 스튜디오 조명 아래 놓인 세련된 향수 제품 사진 장면.'],['실내 공간','따뜻한 햇살과 식물이 어우러진 미니멀한 실내 장면.'],['자연 풍경','안개 낀 산과 호수가 보이는 평화로운 자연 풍경 장면.']]}
 };
 const toolInfo={move:['이동','레이어를 드래그해 배치하세요'],brush:['브러시 선택','수정할 부분을 칠해주세요'],rect:['사각형 선택','드래그하여 영역을 선택하세요'],lasso:['올가미 선택','원하는 영역의 테두리를 그려주세요'],erase:['배경 지우기','현재 레이어의 배경을 지웁니다'],restore:['원본 복원','현재 레이어의 원본을 복원합니다'],protect:['보호 영역','AI가 바꾸면 안 되는 부분을 칠해주세요']};
@@ -76,7 +77,7 @@ function drawOverlay(){
   x.globalAlpha=1;
   x.save();x.lineWidth=2/zoom;x.strokeStyle='#101010';x.stroke(selectionPath(state.selection));x.strokeStyle='#fff';x.setLineDash([5/zoom,5/zoom]);x.stroke(selectionPath(state.selection));x.restore();
   if(drag?.shape){const s=drag.shape;x.save();x.strokeStyle='#e1ff9e';x.lineWidth=1.5/zoom;x.setLineDash([6/zoom,4/zoom]);x.beginPath();if(tool==='rect')x.rect(s.start.x,s.start.y,s.end.x-s.start.x,s.end.y-s.start.y);else{drag.points.forEach((p,i)=>i?x.lineTo(p.x,p.y):x.moveTo(p.x,p.y));}x.stroke();x.restore();}
-  const l=active();if(tool==='move' && l?.visible){
+  const l=active();if(tool==='move' && l?.visible&&!l.contextPatch){
     const pts=layerCorners(l);x.strokeStyle='#d5f778aa';x.lineWidth=1.5/zoom;x.beginPath();pts.forEach((p,i)=>i?x.lineTo(p.x,p.y):x.moveTo(p.x,p.y));x.closePath();x.stroke();
     for(const p of pts){x.fillStyle='#e2ff99';x.fillRect(p.x-4/zoom,p.y-4/zoom,8/zoom,8/zoom);}
     const top=worldPoint(l,0,-l.height/2),rot=worldPoint(l,0,-l.height/2-28/zoom);x.beginPath();x.moveTo(top.x,top.y);x.lineTo(rot.x,rot.y);x.stroke();x.beginPath();x.arc(rot.x,rot.y,5/zoom,0,Math.PI*2);x.fill();
@@ -84,10 +85,12 @@ function drawOverlay(){
 }
 function drawCanvas(){if(!state)return;const w=pending?.result.width||state.width,h=pending?.result.height||state.height;if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}const x=canvas.getContext('2d');x.clearRect(0,0,canvas.width,canvas.height);if(pending)x.drawImage(showOriginal?pending.before:pending.result,0,0);else state.layers.forEach(l=>drawLayer(x,l));drawOverlay();}
 function updateAvailability(){
+  $('#local-harmonize').disabled=!hasBackdrop()||processing||generating||!!pending;
+  $('#ai-harmonize').disabled=!hasBackdrop()||processing||generating||!!pending;
   $('#edit-intent').disabled=processing||generating||!!pending;
   const has=!!state,selection=has&&countMask(state.selection)>0;
-  $('#generate').disabled=!connected||processing||generating||!!pending||(!has&&mode!=='generate')||(mode==='edit'&&!selection)||(mode==='composite'&&(!active()||active().empty));
-  $('#generation-help').textContent=generating?'Codex 생성 중입니다. 결과가 도착하면 비교할 수 있습니다.':!connected?(connectionState?.provider==='api'?'API 연결 설정을 확인해주세요.':'AI 연결을 누르거나 연결 도움말에서 Codex 상태를 확인해주세요.'):connectionState?.usageLimited?'구독 사용 제한입니다. 해제 후 다시 시도하거나 연결 상태를 다시 확인해주세요.':mode==='edit'&&!selection?'브러시·사각형·올가미로 수정할 영역을 선택해주세요.':mode==='composite'?'현재 배치를 바탕으로 주변 조명·그림자를 맞춥니다.':'결과를 확인한 후 적용할 수 있습니다.';
+  $('#generate').disabled=!connected||processing||generating||!!pending||(!has&&mode!=='generate')||(mode==='edit'&&!selection)||(mode==='composite'&&!hasBackdrop());
+  $('#generation-help').textContent=generating?'Codex 생성 중입니다. 결과가 도착하면 비교할 수 있습니다.':!connected?(connectionState?.provider==='api'?'API 연결 설정을 확인해주세요.':'AI 연결을 누르거나 연결 도움말에서 Codex 상태를 확인해주세요.'):connectionState?.usageLimited?'구독 사용 제한입니다. 해제 후 다시 시도하거나 연결 상태를 다시 확인해주세요.':mode==='edit'&&!selection?'브러시·사각형·올가미로 수정할 영역을 선택해주세요.':mode==='composite'?'배치 후 실행 · 대상 주변도 보정하며 추가 AI 사용량이 소모됩니다.':'결과를 확인한 후 적용할 수 있습니다.';
   $('#remove-bg').disabled=!active()||processing||generating||!!pending;
   $$('[data-action="undo"]').forEach(b=>b.disabled=!history?.canUndo||processing||generating||!!pending);
   $$('[data-action="redo"]').forEach(b=>b.disabled=!history?.canRedo||processing||generating||!!pending);
@@ -158,13 +161,13 @@ function render(){
   const text=additionMode?{...modeCopy.edit,title:'무엇을 추가할까요?',hint:'선택한 위치에 대상과 그림자만 추가합니다. 배경을 바꾸려면 작업 방식을 변경하세요.',chips:[['강아지 추가','선택한 위치에 작은 강아지 한 마리를 추가해줘.'],['화분 추가','선택한 위치에 작은 화분 하나를 추가해줘.'],['소품 추가','선택한 위치에 책 한 권을 추가해줘.']]}:modeCopy[mode];$('#prompt-heading').textContent=text.title;$('#prompt').placeholder=additionMode?'예: 선택한 위치에 작은 강아지 한 마리를 추가해줘.':text.placeholder;$('#mode-help').textContent=text.hint;$('#generate-label').textContent=mode==='edit'&&$('#edit-intent').value==='add'?'대상 추가':text.action;
   $('#edit-options').hidden=mode==='generate';$('#composite-options').hidden=mode!=='composite';$('#generation-options').hidden=mode!=='generate';$('#edit-mask-settings').hidden=mode==='composite';
   $$('.prompt-chips button').forEach((b,i)=>{b.textContent=text.chips[i][0];b.dataset.prompt=text.chips[i][1];});
-  $('#composite-target').textContent=active()&&!active().empty?`${active().name} · 이동·크기 조절 가능`:'빈 레이어를 만들고 합성할 이미지를 불러오세요.';
+  $('#composite-target').textContent=active()?.contextPatch?'배경 포함 보정 레이어입니다. 배치를 바꾸려면 원본 대상 레이어를 선택하세요.':active()&&!active().empty?`${active().name} · 이동·크기 조절 가능`:'빈 레이어를 만들고 합성할 이미지를 불러오세요.';
   $('#document-name').textContent=state?.name||'새로운 가능성을 그려보세요';
   $('#document-size').textContent=state?`${pending?.result.width||state.width} × ${pending?.result.height||state.height} px`:'이미지를 열어 시작하세요';
   $('#compare').textContent=showOriginal?'결과 보기':'원본 보기';
   const n=state?countMask(state.selection):0;$('#selection-count').textContent=n?`선택 ${n.toLocaleString()} px`:'선택 영역 없음';
   const l=active();$('#layer-settings').hidden=!l;
-  $('#layer-import').hidden=!l?.empty;
+  $('#layer-import').hidden=!l?.empty;$('#harmonize-controls').hidden=!l||l.empty||l.contextPatch;$('#local-harmonize').disabled=!hasBackdrop()||processing||generating||!!pending;$('#ai-harmonize').disabled=!hasBackdrop()||processing||generating||!!pending;for(const id of ['layer-x','layer-y','layer-width','layer-height','layer-rotation'])$('#'+id).disabled=!!l?.contextPatch;
   if(l){$('#opacity').value=l.opacity*100;$('#opacity-value').textContent=Math.round(l.opacity*100)+'%';$('#layer-x').value=Math.round(l.x);$('#layer-y').value=Math.round(l.y);$('#layer-width').value=Math.round(l.width);$('#layer-height').value=Math.round(l.height);$('#layer-rotation').value=Math.round(l.rotation);}
   renderLayers();drawCanvas();view();updateAvailability();overlay.style.cursor=tool==='move'?'move':['brush','erase','restore','protect'].includes(tool)?'none':'crosshair';
   $('.brush-option').hidden=!['brush','erase','restore','protect'].includes(tool);$('.selection-mode').hidden=!['brush','rect','lasso','protect'].includes(tool);
@@ -204,7 +207,7 @@ overlay.addEventListener('pointerdown',e=>{
     drag.selectionClick={inside,moved:false};
   }
   if(tool==='move'){
-    if(!l){drag=null;return;}
+    if(!l||l.contextPatch){drag=null;return;}
     const corners=layerCorners(l),corner=corners.findIndex(a=>Math.hypot(a.x-p.x,a.y-p.y)<12/zoom);
     const rot=worldPoint(l,0,-l.height/2-28/zoom);drag.type=corner>=0?'resize':Math.hypot(rot.x-p.x,rot.y-p.y)<12/zoom?'rotate':'move';drag.layer=l;if(drag.type!=='move')drag.selectionClick=null;
     drag.distance=Math.hypot(p.x-l.x-l.width/2,p.y-l.y-l.height/2);drag.angle=Math.atan2(p.y-l.y-l.height/2,p.x-l.x-l.width/2);return;
@@ -288,6 +291,37 @@ async function removeBg(){
 }
 
 async function imageFromURL(url){const img=new Image();img.src=url;await img.decode();return img;}
+
+function hasBackdrop(doc=state,l=active()){
+  if(!doc||!l||l.empty||l.contextPatch||!l.visible)return false;
+  const i=doc.layers.findIndex(a=>a.id===l.id);return doc.layers.slice(0,i).some(a=>a.visible&&a.opacity>0&&!a.empty);
+}
+function targetSpace(bitmap,l){
+  const c=makeCanvas(l.bitmap.width,l.bitmap.height),x=c.getContext('2d');
+  x.scale(l.bitmap.width/l.width,l.bitmap.height/l.height);x.translate(l.width/2,l.height/2);x.rotate(-l.rotation*Math.PI/180);x.translate(-l.x-l.width/2,-l.y-l.height/2);x.drawImage(bitmap,0,0);return c;
+}
+async function previewHarmonize(){
+  if(locked())return;const doc=state,l=active();if(!hasBackdrop(doc,l)){toast('배경 위에 놓인 대상 레이어를 선택해주세요.');return;}
+  const rev=revision;processing=true;updateAvailability();
+  try{
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const index=doc.layers.findIndex(a=>a.id===l.id),background=flatten({...doc,layers:doc.layers.slice(0,index)}),ref=targetSpace(background,l);
+    const input=pixels(l.bitmap).data,reference=pixels(ref).data,strength=Number($('#harmonize-strength').value)/100;
+    let matched=matchColorRGBA(input,reference,strength);matched=blendSubjectEdges(matched,reference,l.bitmap.width,l.bitmap.height,strength*.45);
+    const protection=alpha(targetSpace(doc.protection,l)),all=new Uint8ClampedArray(protection.length).fill(255);
+    matched=blendRGBA(input,matched,all,protection);
+    const bitmap=fromPixels(matched,l.bitmap.width,l.bitmap.height),edited={...doc,layers:doc.layers.map(a=>a.id===l.id?{...a,bitmap}:a.contextPatch&&a.sourceLayerId===l.id?{...a,visible:false}:a)};
+    if(rev!==revision)return;
+    pending={before:flatten(doc),result:flatten(edited),operation:'local-harmonize',layerEdit:{id:l.id,bitmap},notice:'색감·경계 맞춤 미리보기 · 무료 로컬 처리'};showOriginal=false;render();toast('원본과 비교한 뒤 적용하세요. 접지 그림자는 AI로 어우르기를 사용하세요.');
+  }catch(error){toast(error.message);}finally{processing=false;updateAvailability();}
+}
+function prepareHarmonize(){
+  if(locked())return;if(!hasBackdrop()){toast('배경 위에 놓인 대상 레이어를 선택해주세요.');return;}
+  $('#edit-intent').value='composite';selectMode('composite');
+  $('#prompt').value='현재 대상의 위치·크기·형태와 정체성을 유지하고, 배경의 광원 방향·색온도·명암에 맞춰 자연스럽게 어우러지게 해줘. 실제 접촉면에 맞는 접지 그림자와 필요한 약한 반사를 추가하고 주변 재질은 최대한 유지해줘.';
+  modeDrafts.composite=$('#prompt').value;render();$('#composite-options').scrollIntoView({block:'nearest'});toast('배치를 먼저 마친 뒤 배경과 어우르기를 누르세요. 추가 AI 요청으로 사용량이 소모됩니다.');
+}
+
 function editMask(doc,operation){
   let mask=alpha(doc.selection);
   if(operation==='composite'){
@@ -301,6 +335,7 @@ async function generate(){
   if(mode==='edit'&&$('#edit-intent').value==='replace'&&isAdditionRequest(prompt)){$('#edit-intent').value='add';render();toast('추가 요청을 감지해 배경 유지 방식으로 전환했습니다. 내용을 확인한 뒤 대상 추가를 눌러주세요.');return;}
   const operation=mode,doc=state,rev=revision,id=++requestSerial,adding=mode==='edit'&&$('#edit-intent').value==='add',targetId=active()?.empty?active().id:null;currentRequestId=crypto.randomUUID();generating=true;controller=new AbortController();$('#busy-message').textContent='이미지 준비 중';$('#busy-panel').hidden=false;startProgress();updateAvailability();
   try{await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));if(id!==requestSerial)return;
+  if(operation==='composite'&&!hasBackdrop(doc,active()))throw Error('배경 위에 놓인 대상 레이어를 선택해주세요.');
   const geometry=doc?requestGeometry(doc.width,doc.height):null;
   const before=doc?flatten(doc):makeCanvas(1024,1024);
   const allowed=operation==='generate'?null:editMask(doc,operation),protectedPixels=doc?alpha(doc.protection):null;
@@ -314,7 +349,7 @@ async function generate(){
     m.getContext('2d').putImageData(data,0,0);
     const paddedMask=makeCanvas(geometry.width,geometry.height),mx=paddedMask.getContext('2d');mx.fillStyle='white';mx.fillRect(0,0,paddedMask.width,paddedMask.height);mx.clearRect(geometry.x,geometry.y,geometry.drawWidth,geometry.drawHeight);mx.drawImage(m,geometry.x,geometry.y,geometry.drawWidth,geometry.drawHeight);payload.mask=paddedMask.toDataURL('image/png');
     const guide=copy(input),tint=pixels(paddedMask);for(let i=0;i<tint.data.length;i+=4){tint.data[i]=255;tint.data[i+1]=0;tint.data[i+2]=255;tint.data[i+3]=255-tint.data[i+3];}const tintCanvas=fromPixels(tint.data,geometry.width,geometry.height);guide.getContext('2d').globalAlpha=.4;guide.getContext('2d').drawImage(tintCanvas,0,0);payload.guide=guide.toDataURL('image/png');
-    payload.prompt=operation==='composite'?`Use the first image as the exact approved layout. Blend the placed subject naturally into the scene with matching lighting, color and shadows. Preserve composition and subject identity. ${connectionState?.provider==='codex'?'Image 2 is the region guide; image 3 is the subject reference.':'The second image is the subject reference.'} Modify only the mask area. User request: ${prompt}`:`Edit only the indicated region; preserve composition and unmasked details. User request: ${prompt}`;
+    payload.prompt=operation==='composite'?`Use the first image as the exact approved layout. HARMONIZE the already placed subject with the scene. Preserve its exact position, scale, silhouette, identity and camera perspective. Match the scene light direction, color temperature, exposure and local contrast. Add physically plausible contact shadow, ambient occlusion and only appropriate subtle reflections on the actual receiving surface. Preserve existing floor/wall texture; do not replace the room or create an unrelated lighting setup. ${connectionState?.provider==='codex'?'Image 2 is the region guide; image 3 is the subject reference.':'The second image is the subject reference.'} Modify only the mask area. User request: ${prompt}`:`Edit only the indicated region; preserve composition and unmasked details. User request: ${prompt}`;
     if(adding)payload.prompt=`ADD ONLY the requested subject and its soft contact shadow. Keep the whole subject within the indicated region with padding around all extremities. Use the scene ONLY as perspective and lighting reference. Generate the complete isolated subject centered with transparent padding. The application will fit it to the selected region. Use actual alpha transparency; never paint checkerboard squares or a fake transparency pattern. Do not draw the background or magenta guide. User request: ${prompt}`;
     if(operation==='composite'&&active())payload.reference=active().bitmap.toDataURL('image/png');
   }
@@ -324,7 +359,7 @@ async function generate(){
     if(body.imageVerified)checkConnection();if(body.timings){const t=body.timings;$('#generation-timing').hidden=false;$('#generation-timing').textContent=`최근 생성 ${(t.totalMs/1000).toFixed(1)}초 · Codex ${(t.codexMs/1000).toFixed(1)}초 · 결과 회수 ${(t.retrievalMs/1000).toFixed(1)}초`;}
     stopProgress();$('#busy-message').textContent='결과 처리 중';const image=await imageFromURL(body.image);
     if(id!==requestSerial||rev!==revision)return;
-    let result,addition=null,additionPlacement=null,notice=null,comparison=before;
+    let result,addition=null,additionPlacement=null,contextPatch=null,notice=null,comparison=before;
     if(operation==='generate'){
       result=makeCanvas(image.width,image.height);result.getContext('2d').drawImage(image,0,0);
       comparison=makeCanvas(image.width,image.height);
@@ -342,10 +377,10 @@ async function generate(){
         additionPlacement={x:placement.x,y:placement.y,width:placement.width,height:placement.height};
         const overlay=makeCanvas(doc.width,doc.height);overlay.getContext('2d').drawImage(addition,placement.x,placement.y,placement.width,placement.height);
         result=fromPixels(overRGBA(pixels(before).data,pixels(overlay).data),doc.width,doc.height);
-      }else result=fromPixels(blendRGBA(pixels(before).data,pixels(generated).data,allowed,protectedPixels),doc.width,doc.height);
+      }else if(operation==='composite'){const rgba=contextOverlay(pixels(generated).data,allowed,protectedPixels);contextPatch=fromPixels(rgba,doc.width,doc.height);result=fromPixels(overRGBA(pixels(before).data,rgba),doc.width,doc.height);notice='AI 조화 미리보기 · 대상 주변의 배경도 보정됩니다';}else result=fromPixels(blendRGBA(pixels(before).data,pixels(generated).data,allowed,protectedPixels),doc.width,doc.height);
     }
     if(!state){initialize(makeCanvas(result.width,result.height),'AI 이미지',true);}
-    pending={before:comparison,result,operation,addition,additionPlacement,notice,targetId};showOriginal=false;render();if(operation==='generate'){zoom=Math.max(.05,Math.min(1,(stage.clientWidth-100)/result.width,(stage.clientHeight-150)/result.height));pan={x:0,y:0};view();}toast('결과를 비교하고 마음에 들면 적용해주세요.');
+    pending={before:comparison,result,operation,addition,additionPlacement,contextPatch,sourceLayerId:active()?.id,notice,targetId};showOriginal=false;render();if(operation==='generate'){zoom=Math.max(.05,Math.min(1,(stage.clientWidth-100)/result.width,(stage.clientHeight-150)/result.height));pan={x:0,y:0};view();}toast('결과를 비교하고 마음에 들면 적용해주세요.');
   }catch(error){if(error.name!=='AbortError')toast(error.message);}
   finally{if(id===requestSerial){generating=false;controller=null;stopProgress();$('#busy-panel').hidden=true;updateAvailability();}}
 }
@@ -355,12 +390,15 @@ async function cancelGeneration(){if(cancelling||!generating)return;cancelling=t
   finally{cancelling=false;if(confirmed){generating=false;$('#busy-panel').hidden=true;$('[data-action="cancel-generation"]').textContent='생성 취소';}else{$('#busy-message').textContent='취소 완료 미확인';$('[data-action="cancel-generation"]').textContent='취소 상태 다시 확인';}updateAvailability();}
 }
 function applyResult(){
-  if(!pending)return;if(pending.addition){const {addition,targetId,additionPlacement}=pending;pending=null;const l=layer(addition,'AI 추가 대상',{...(targetId?{id:targetId}:{}),...additionPlacement});tool='move';commit({...state,layers:[...state.layers.filter(a=>a.id!==targetId),l],active:l.id,selection:blankMask()},'선택 영역 안에 배치했습니다. 모서리를 드래그해 크기를 조절하세요.');return;}const result=pending.result,operation=pending.operation;pending=null;
+  if(!pending)return;
+  if(pending.layerEdit){const {id,bitmap}=pending.layerEdit;pending=null;tool='move';commit({...state,layers:state.layers.map(l=>l.id===id?{...l,bitmap}:l.contextPatch&&l.sourceLayerId===id?{...l,visible:false}:l),active:id},'대상의 색감과 경계를 맞췄습니다. 조명·그림자는 AI로 어우르기에서 보정하세요.');return;}
+  if(pending.contextPatch){const {contextPatch,sourceLayerId}=pending;pending=null;const l=layer(contextPatch,'AI 조화 보정 · 배경 포함',{contextPatch:true,sourceLayerId});commit({...state,layers:[...state.layers,l],active:l.id,selection:blankMask()},'AI 조화를 별도 레이어로 적용했습니다. 배치를 바꾸려면 원본 대상 레이어를 선택하세요.');return;}
+  if(pending.addition){const {addition,targetId,additionPlacement}=pending;pending=null;const l=layer(addition,'AI 추가 대상',{...(targetId?{id:targetId}:{}),...additionPlacement});tool='move';commit({...state,layers:[...state.layers.filter(a=>a.id!==targetId),l],active:l.id,selection:blankMask()},'선택 영역 안에 배치했습니다. 모서리를 드래그해 크기를 조절하세요.');return;}const result=pending.result,operation=pending.operation;pending=null;
   const l=layer(result,operation==='generate'?'AI 생성 이미지':'AI 편집 결과');
   // Keep previous layers for recovery, hide them to avoid double-compositing transparent pixels.
   commit({...state,width:result.width,height:result.height,layers:[...state.layers.map(a=>({...a,visible:false})),l],active:l.id,selection:makeCanvas(result.width,result.height),protection:operation==='generate'?makeCanvas(result.width,result.height):state.protection},'결과를 적용했습니다. 이전 레이어는 숨김 상태로 보관했습니다.');
 }
-function exportPNG(){if(!state)return;const c=pending?pending.result:flatten();c.toBlob(blob=>{if(!blob){toast('PNG를 만들지 못했습니다.');return;}const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=`2026-10-28-${state.name.replace(/[<>:"/\\|?*]/g,'-')}-v1.5.3.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('PNG를 내보냈습니다. 원본 파일은 변경하지 않았습니다.');},'image/png');}
+function exportPNG(){if(!state)return;const c=pending?pending.result:flatten();c.toBlob(blob=>{if(!blob){toast('PNG를 만들지 못했습니다.');return;}const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=`2026-10-28-${state.name.replace(/[<>:"/\\|?*]/g,'-')}-v1.5.4.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('PNG를 내보냈습니다. 원본 파일은 변경하지 않았습니다.');},'image/png');}
 
 function sample(){
   if(locked())return;if(state&&!confirm('현재 작업을 샘플로 바꿀까요? 필요한 결과는 먼저 내보내세요.'))return;
@@ -383,6 +421,7 @@ function sample(){
 
 const actions={
   'connection-info':()=>$('#connection-dialog').showModal(),
+  'local-harmonize':previewHarmonize,'ai-harmonize':prepareHarmonize,
   open:()=>{if(!locked())$('#open-input').click();},add:()=>{if(!locked())$('#add-input').click();},new:()=>{if(!locked())$('#new-dialog').showModal();},sample,export:exportPNG,help:()=>window.open('/2026-10-28-user-manual.html','_blank','noopener'),
   'new-layer':()=>{if(locked())return;if(!state){initialize(makeCanvas(1024,1024),'새 캔버스',false,undefined,true);$('#edit-intent').value='add';selectMode('edit');return;}const l=layer(blankMask(),`레이어 ${serial+1}`,{empty:true});$('#edit-intent').value='add';selectMode('edit');commit({...state,layers:[...state.layers,l],active:l.id},null,'빈 레이어 추가');},
   'import-layer':()=>{if(locked())return;if(!state||!active()?.empty)actions['new-layer']();importTarget=state.active;$('#add-input').click();},
@@ -450,9 +489,11 @@ function canvasBlob(c){return new Promise((resolve,reject)=>c.toBlob(b=>b?resolv
 async function packDocument(doc){return {...doc,selection:await canvasBlob(doc.selection),protection:await canvasBlob(doc.protection),layers:await Promise.all(doc.layers.map(async l=>({...l,bitmap:await canvasBlob(l.bitmap),original:await canvasBlob(l.original)})))};}
 async function unpackCanvas(blob){const image=await createImageBitmap(blob);const c=makeCanvas(image.width,image.height);c.getContext('2d').drawImage(image,0,0);image.close();return c;}
 async function unpackDocument(doc){return {...doc,selection:await unpackCanvas(doc.selection),protection:await unpackCanvas(doc.protection),layers:await Promise.all(doc.layers.map(async l=>({...l,bitmap:await unpackCanvas(l.bitmap),original:await unpackCanvas(l.original)})))};}
-function scheduleSave(){if(!storageReady||restoring||!state)return;clearTimeout(saveTimer);$('#save-status').textContent='브라우저 저장 대기 중';saveTimer=setTimeout(()=>{const doc=state,result=pending,drafts={...modeDrafts,[mode]:$('#prompt').value},selectedMode=mode,editIntent=$('#edit-intent').value;$('#save-status').textContent='브라우저에 저장 중…';saveQueue=saveQueue.catch(()=>{}).then(async()=>{const data={version:1,savedAt:Date.now(),doc:await packDocument(doc),mode:selectedMode,editIntent,drafts,pending:result?{operation:result.operation,targetId:result.targetId,notice:result.notice,additionPlacement:result.additionPlacement,addition:result.addition?await canvasBlob(result.addition):null,before:await canvasBlob(result.before),result:await canvasBlob(result.result)}:null};await sessionStore(data);savedSession=data;$('#restore-session').hidden=true;$('#save-status').textContent='브라우저에 자동 저장됨';}).catch(()=>{$('#save-status').textContent='자동 저장 실패 · PNG를 내보내주세요';});},600);}
+function scheduleSave(){if(!storageReady||restoring||!state)return;clearTimeout(saveTimer);$('#save-status').textContent='브라우저 저장 대기 중';saveTimer=setTimeout(()=>{const doc=state,result=pending,drafts={...modeDrafts,[mode]:$('#prompt').value},selectedMode=mode,editIntent=$('#edit-intent').value;$('#save-status').textContent='브라우저에 저장 중…';saveQueue=saveQueue.catch(()=>{}).then(async()=>{const data={version:1,savedAt:Date.now(),doc:await packDocument(doc),mode:selectedMode,editIntent,drafts,pending:result?{operation:result.operation,layerEdit:result.layerEdit?{id:result.layerEdit.id,bitmap:await canvasBlob(result.layerEdit.bitmap)}:null,contextPatch:result.contextPatch?await canvasBlob(result.contextPatch):null,sourceLayerId:result.sourceLayerId,targetId:result.targetId,notice:result.notice,additionPlacement:result.additionPlacement,addition:result.addition?await canvasBlob(result.addition):null,before:await canvasBlob(result.before),result:await canvasBlob(result.result)}:null};await sessionStore(data);savedSession=data;$('#restore-session').hidden=true;$('#save-status').textContent='브라우저에 자동 저장됨';}).catch(()=>{$('#save-status').textContent='자동 저장 실패 · PNG를 내보내주세요';});},600);}
 async function restoreAvailable(){try{savedSession=await sessionStore();$('#restore-session').hidden=!savedSession;$('#save-status').textContent=savedSession?'저장된 작업이 있습니다. 복구 버튼을 눌러주세요.':'편집하면 이 브라우저에 자동 저장됩니다.';}catch{$('#save-status').textContent='브라우저 저장을 사용할 수 없습니다.';}finally{storageReady=true;if(state)scheduleSave();}}
-$('#restore-session').addEventListener('click',async()=>{if(!savedSession||locked())return;if(state&&!confirm('현재 작업을 저장된 작업으로 교체할까요?'))return;const chosenSession=savedSession;restoring=true;clearTimeout(saveTimer);processing=true;updateAvailability();try{await saveQueue.catch(()=>{});const saved=chosenSession,doc=await unpackDocument(saved.doc),result=saved.pending?{...saved.pending,addition:saved.pending.addition?await unpackCanvas(saved.pending.addition):null,before:await unpackCanvas(saved.pending.before),result:await unpackCanvas(saved.pending.result)}:null;state=doc;pending=result;history=new History({...doc,action:'저장된 작업 복구'});serial=Math.max(serial,...doc.layers.map(l=>l.id));Object.assign(modeDrafts,saved.drafts);mode=saved.mode||'edit';$('#edit-intent').value=saved.editIntent||(mode==='composite'?'composite':'add');$('#prompt').value=modeDrafts[mode]||'';revision++;$('#welcome').hidden=true;frame.hidden=false;$('#restore-session').hidden=true;$('#save-status').textContent='저장된 작업 복구됨';fit();render();toast('레이어·선택·보호 영역을 복구했습니다. 이전 실행 취소 이력은 새로 시작합니다.');}catch{toast('저장된 작업을 복구하지 못했습니다.');}finally{processing=false;restoring=false;updateAvailability();scheduleSave();}});
+$('#restore-session').addEventListener('click',async()=>{if(!savedSession||locked())return;if(state&&!confirm('현재 작업을 저장된 작업으로 교체할까요?'))return;const chosenSession=savedSession;restoring=true;clearTimeout(saveTimer);processing=true;updateAvailability();try{await saveQueue.catch(()=>{});const saved=chosenSession,doc=await unpackDocument(saved.doc),result=saved.pending?{...saved.pending,layerEdit:saved.pending.layerEdit?{id:saved.pending.layerEdit.id,bitmap:await unpackCanvas(saved.pending.layerEdit.bitmap)}:null,contextPatch:saved.pending.contextPatch?await unpackCanvas(saved.pending.contextPatch):null,addition:saved.pending.addition?await unpackCanvas(saved.pending.addition):null,before:await unpackCanvas(saved.pending.before),result:await unpackCanvas(saved.pending.result)}:null;state=doc;pending=result;history=new History({...doc,action:'저장된 작업 복구'});serial=Math.max(serial,...doc.layers.map(l=>l.id));Object.assign(modeDrafts,saved.drafts);mode=saved.mode||'edit';$('#edit-intent').value=saved.editIntent||(mode==='composite'?'composite':'add');$('#prompt').value=modeDrafts[mode]||'';revision++;$('#welcome').hidden=true;frame.hidden=false;$('#restore-session').hidden=true;$('#save-status').textContent='저장된 작업 복구됨';fit();render();toast('레이어·선택·보호 영역을 복구했습니다. 이전 실행 취소 이력은 새로 시작합니다.');}catch{toast('저장된 작업을 복구하지 못했습니다.');}finally{processing=false;restoring=false;updateAvailability();scheduleSave();}});
 $('#prompt').addEventListener('input',scheduleSave);
 
 render();checkConnection();restoreAvailable();
+
+$('#harmonize-strength').addEventListener('input',e=>$('#harmonize-value').textContent=e.target.value+'%');
