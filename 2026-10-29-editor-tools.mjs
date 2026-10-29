@@ -48,8 +48,8 @@ export function mountEditorTools(api){
     previewQueued=false;if(!perspective)return;
     const x=preview.getContext('2d'),w=preview.width-2*pad,h=preview.height-2*pad;x.clearRect(0,0,preview.width,preview.height);
     renderLayer(x,{...perspective,x:pad,y:pad,width:w,height:h,rotation:0,quad,shadow:{enabled:false},visible:true,opacity:1});
-    x.strokeStyle='#d5f778';x.lineWidth=2;x.beginPath();quad.forEach(([a,b],i)=>i?x.lineTo(pad+a*w,pad+b*h):x.moveTo(pad+a*w,pad+b*h));x.closePath();x.stroke();
-    quad.forEach(([a,b])=>{x.fillStyle='#d5f778';x.fillRect(pad+a*w-5,pad+b*h-5,10,10);});
+    x.strokeStyle='#e3b341';x.lineWidth=2;x.beginPath();quad.forEach(([a,b],i)=>i?x.lineTo(pad+a*w,pad+b*h):x.moveTo(pad+a*w,pad+b*h));x.closePath();x.stroke();
+    quad.forEach(([a,b])=>{x.fillStyle='#e3b341';x.fillRect(pad+a*w-5,pad+b*h-5,10,10);});
     document.querySelectorAll('[data-quad]').forEach(input=>input.value=Math.round(quad[Number(input.dataset.quad)][Number(input.dataset.axis)]*100));
   }
   const schedulePerspective=()=>{if(!previewQueued){previewQueued=true;requestAnimationFrame(drawPerspective);}};
@@ -76,7 +76,7 @@ export function mountEditorTools(api){
   for(const axis of ['width','height'])$('#export-'+axis).onchange=()=>{if($('#export-lock').checked&&exportSource){const other=axis==='width'?'height':'width';$('#export-'+other).value=Math.max(1,Math.round(Number($('#export-'+axis).value)*exportSource[other]/exportSource[axis]));}exportPreview();};
   const closeExport=()=>{$('#export-dialog').close();exportRevision++;exportBlob=null;exportSource=null;$('#export-preview').removeAttribute('src');if(exportURL)URL.revokeObjectURL(exportURL);exportURL=null;};
   $('#export-cancel').onclick=closeExport;$('#export-dialog').addEventListener('cancel',e=>{e.preventDefault();closeExport();});
-  $('#export-save').onclick=()=>{if(!exportBlob)return;const a=document.createElement('a'),url=URL.createObjectURL(exportBlob);a.href=url;a.download=`2026-10-29-${api.doc().name.replace(/[<>:"/\\|?*]/g,'-')}-v1.6.2.${$('#export-format').value}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);closeExport();};
+  $('#export-save').onclick=()=>{if(!exportBlob)return;const a=document.createElement('a'),url=URL.createObjectURL(exportBlob);a.href=url;a.download=`2026-10-29-${api.doc().name.replace(/[<>:"/\\|?*]/g,'-')}-v1.7.0.${$('#export-format').value}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);closeExport();};
   return {
     openExport(){exportSource=api.flatten();if(!exportSource)return;$('#export-width').value=exportSource.width;$('#export-height').value=exportSource.height;$('#export-dialog').showModal();exportPreview();},
     sync(){

@@ -104,10 +104,10 @@ function drawOverlay(){
   }
   x.globalAlpha=1;
   x.save();x.lineWidth=2/zoom;x.strokeStyle='#101010';x.stroke(selectionPath(state.selection));x.strokeStyle='#fff';x.setLineDash([5/zoom,5/zoom]);x.stroke(selectionPath(state.selection));x.restore();
-  if(drag?.shape){const s=drag.shape;x.save();x.strokeStyle='#e1ff9e';x.lineWidth=1.5/zoom;x.setLineDash([6/zoom,4/zoom]);x.beginPath();if(tool==='rect')x.rect(s.start.x,s.start.y,s.end.x-s.start.x,s.end.y-s.start.y);else{drag.points.forEach((p,i)=>i?x.lineTo(p.x,p.y):x.moveTo(p.x,p.y));}x.stroke();x.restore();}
+  if(drag?.shape){const s=drag.shape;x.save();x.strokeStyle='#e3b341';x.lineWidth=1.5/zoom;x.setLineDash([6/zoom,4/zoom]);x.beginPath();if(tool==='rect')x.rect(s.start.x,s.start.y,s.end.x-s.start.x,s.end.y-s.start.y);else{drag.points.forEach((p,i)=>i?x.lineTo(p.x,p.y):x.moveTo(p.x,p.y));}x.stroke();x.restore();}
   const l=active();if(tool==='move' && l?.visible&&!l.contextPatch){
-    const pts=layerCorners(l);x.strokeStyle='#d5f778aa';x.lineWidth=1.5/zoom;x.beginPath();pts.forEach((p,i)=>i?x.lineTo(p.x,p.y):x.moveTo(p.x,p.y));x.closePath();x.stroke();
-    for(const p of pts){x.fillStyle='#e2ff99';x.fillRect(p.x-4/zoom,p.y-4/zoom,8/zoom,8/zoom);}
+    const pts=layerCorners(l);x.strokeStyle='#e3b341cc';x.lineWidth=1.5/zoom;x.beginPath();pts.forEach((p,i)=>i?x.lineTo(p.x,p.y):x.moveTo(p.x,p.y));x.closePath();x.stroke();
+    for(const p of pts){x.fillStyle='#e3b341';x.fillRect(p.x-4/zoom,p.y-4/zoom,8/zoom,8/zoom);}
     const top=worldPoint(l,0,-l.height/2),rot=worldPoint(l,0,-l.height/2-28/zoom);x.beginPath();x.moveTo(top.x,top.y);x.lineTo(rot.x,rot.y);x.stroke();x.beginPath();x.arc(rot.x,rot.y,5/zoom,0,Math.PI*2);x.fill();
   }updateCursor();
 }
