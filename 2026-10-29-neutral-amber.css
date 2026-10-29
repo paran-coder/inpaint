@@ -108,3 +108,19 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .ai-connection-actions{display:flex;align-items:center;gap:6px}
 .ai-connection-actions button{min-height:34px;padding:7px 9px;font-size:12px;white-space:nowrap}
 @media(max-width:500px){.topbar{padding:0 8px;gap:6px}.header-actions{gap:4px}.header-actions>.manual-link,.header-actions>button{height:34px;min-height:34px;font-size:10px;padding:0 6px}}
+/* v1.7.2: common layer tools and readable tool shortcuts. */
+.common-editing{border-top:8px solid #151515;background:#202020}
+.common-editing-heading{padding:16px 24px 0;color:#a5a5a5;font-size:12px;font-weight:500;letter-spacing:.3px}
+.common-editing .layer-section{border-top:0;padding-top:16px}
+.layer-heading-actions{display:flex;align-items:center;gap:6px}
+.layer-heading-actions>button{display:grid;place-items:center;width:34px;height:34px;padding:6px;border:1px solid #555;border-radius:3px;color:#c4c4c4}
+.layer-heading-actions .icon-add{font-size:23px;line-height:1}
+.layer-heading-actions .trash-button{color:#c8b8b4;border-color:#75615c}
+.layer-heading-actions .trash-button:disabled{color:#858585;border-color:#454545}
+.layer-heading-actions .trash-button.trash-over{background:#462d28;border-color:#c78f80;color:#f0c5b9}
+.toolrail>button{width:40px;height:46px;min-height:46px}
+.toolrail>button>svg{width:21px;height:21px;transform:translate(-3px,-3px)}
+.toolrail>button>span{font:600 11px/1.1 ui-monospace,"Consolas",monospace;right:4px;bottom:4px;color:#c4c4c4;opacity:1}
+.toolrail>button.active>span{color:#f2f2f2}
+@media(max-width:1400px){.common-editing-heading{padding-left:21px;padding-right:21px}}
+@media(max-width:800px){.common-editing-heading{padding-left:19px;padding-right:19px}}

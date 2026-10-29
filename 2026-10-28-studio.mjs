@@ -114,6 +114,7 @@ function drawOverlay(){
 }
 function drawCanvas(){if(!state)return;const w=pending?.result.width||state.width,h=pending?.result.height||state.height;if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}const x=canvas.getContext('2d');x.clearRect(0,0,canvas.width,canvas.height);if(pending)x.drawImage(showOriginal?pending.before:pending.result,0,0);else state.layers.forEach(l=>drawLayer(x,l));drawOverlay();}
 function updateAvailability(){
+  trash.disabled=!active()||processing||generating||!!pending;
   $('#restore-session').disabled=processing||generating;$('#start-fresh').disabled=processing||generating;
   advanced?.sync();
   $('#local-harmonize').disabled=!hasBackdrop()||processing||generating||!!pending;
