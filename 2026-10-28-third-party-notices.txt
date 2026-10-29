@@ -32,3 +32,17 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+v1.6.0 review and browser adaptations (2026-10-29):
+- crates/compose/src/masks.rs: normalized coverage and state-based caching.
+- crates/algo/src/selection/morphology.rs: Euclidean radius coverage and canvas-edge behavior.
+- crates/algo/src/perspective.rs and transform.rs: quad homography, validation, inverse sampling.
+- crates/compose/src/effects.rs: mask-derived shadow shape, shadow-before-content ordering.
+- crates/ui-egui/src/dialogs/export_dialog.rs: validated format/quality/size/transparency settings.
+- crates/algo/src/tone.rs: straight RGBA processing while retaining alpha.
+Differences: browser Canvas renderer, single convex plane constrained inside the layer frame,
+8-bit mask coverage, separable EDT, two box passes for selection softening, simple brightness/
+warm-cool/luma saturation controls and browser shadow blur/encoding. Not the full Rust engine,
+Photoshop effect compatibility, multi-plane warp, or a scene-aware contact-shadow solver.
+The existing MIT notice above covers the PhotoCraft-derived portions. Source:
+https://github.com/storytold/photocraft

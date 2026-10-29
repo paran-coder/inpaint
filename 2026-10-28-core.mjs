@@ -183,7 +183,7 @@ export class History {
   redo(){if(this.canRedo)this.index++;return this.states[this.index];}
   // Unique canvases are shared across immutable snapshots; trim old history by real pixels.
   trim(bytes=192*1024*1024) {
-    const size=()=>{const seen=new Set();for(const s of this.states)for(const l of s.layers||[])for(const c of [l.bitmap,l.original])if(c)seen.add(c);for(const s of this.states)for(const c of [s.selection,s.protection])if(c)seen.add(c);return [...seen].reduce((n,c)=>n+c.width*c.height*4,0);};
+    const size=()=>{const seen=new Set();for(const s of this.states)for(const l of s.layers||[])for(const c of [l.bitmap,l.original,l.mask])if(c)seen.add(c);for(const s of this.states)for(const c of [s.selection,s.protection])if(c)seen.add(c);return [...seen].reduce((n,c)=>n+c.width*c.height*4,0);};
     while(this.states.length>1 && this.index>0 && size()>bytes){this.states.shift();this.index--;}
   }
 }

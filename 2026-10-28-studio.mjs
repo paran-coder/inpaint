@@ -1,8 +1,10 @@
-import {matchColorRGBA,blendSubjectEdges,contextOverlay} from './2026-10-28-harmonize.mjs';
 import {apiFetch,connectBridge,disconnectBridge,bridgeState} from './2026-10-28-bridge-client.mjs';
+import {matchColorRGBA,blendSubjectEdges,contextOverlay} from './2026-10-28-harmonize.mjs';
 import {sessionStore} from './2026-10-28-storage.mjs';
 import {layerCommand,recoverCheckerboard,deleteIntent,resizeDimensions,isAdditionRequest,fitAddition,overRGBA,blendRGBA,featherInside,History,requestGeometry,selectionClickIntent} from './2026-10-28-core.mjs';
 import {removeBackground} from './2026-10-28-background.mjs';
+import {renderLayer,renderedBitmap,maskRGBA,retainNativeAlpha,IDENTITY_QUAD,quadMatrix,invertMatrix,mapPoint} from './2026-10-29-layer-effects.mjs';
+import {mountEditorTools} from './2026-10-29-editor-tools.mjs';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const canvas=$('#canvas'),overlay=$('#overlay'),stage=$('#stage'),frame=$('#canvas-frame');
@@ -10,6 +12,7 @@ let state=null,history=null,tool='move',mode='edit',zoom=1,pan={x:0,y:0},drag=nu
 let connected=false,processing=false,generating=false,controller=null,pending=null,showOriginal=false,toastTimer,serial=0,revision=0,requestSerial=0;
 let cursorPosition=null,importTarget=null;
 let connectionState=null;
+let advanced=null,effectBase=null,selectionBase=null;
 let progressTimer=null,generationStarted=0,currentRequestId=null,cancelling=false;
 function stopProgress(){clearInterval(progressTimer);progressTimer=null;}
 function startProgress(){stopProgress();generationStarted=Date.now();let polling=false;const tick=async()=>{if(!generating)return;$('#busy-elapsed').textContent=`${Math.floor((Date.now()-generationStarted)/1000)}초 경과`;if(polling)return;polling=true;try{const r=await apiFetch('/api/progress?requestId='+encodeURIComponent(currentRequestId));const p=await r.json();if(generating&&p.active&&p.requestId===currentRequestId)$('#busy-message').textContent=({preparation:'이미지 준비 및 연결 확인 중',generation:'이미지 생성 중',result:'결과 처리 중'})[p.stage]||'이미지 생성 중';}catch{}finally{polling=false;}};progressTimer=setInterval(tick,1000);tick();}
@@ -31,12 +34,15 @@ function active(){return state?.layers.find(l=>l.id===state.active);}
 function toast(message){clearTimeout(toastTimer);$('#toast').textContent=message;$('#toast').hidden=false;toastTimer=setTimeout(()=>$('#toast').hidden=true,6500);}
 function snapshot(){return state;}
 function commit(next=state,message,label){state={...next,action:label||message||toolInfo[tool][0]};history.push(state);history.trim();revision++;render();if(message)toast(message);}
-function updateLayer(changes){state=Object.keys(changes).every(k=>["x","y","width","height","rotation"].includes(k))?layerCommand(state,"transform",{layer:state.active,changes}):{...state,layers:state.layers.map(l=>l.id===state.active?{...l,...changes}:l)};}
-function drawLayer(ctx,l){if(!l.visible)return;ctx.save();ctx.globalAlpha=l.opacity;ctx.translate(l.x+l.width/2,l.y+l.height/2);ctx.rotate(l.rotation*Math.PI/180);ctx.drawImage(l.bitmap,-l.width/2,-l.height/2,l.width,l.height);ctx.restore();}
+function updateLayer(changes){state=Object.keys(changes).every(k=>["x","y","width","height","rotation"].includes(k))?layerCommand(state,"transform",{layer:state.active,changes}):{...state,layers:state.layers.map(l=>l.id===state.active?{...l,...changes}:l.contextPatch&&l.sourceLayerId===state.active?{...l,visible:false}:l)};}
+function drawLayer(ctx,l){renderLayer(ctx,l);}
 function flatten(doc=state){const c=makeCanvas(doc.width,doc.height),x=c.getContext('2d');doc.layers.forEach(l=>drawLayer(x,l));return c;}
 function blankMask(){return makeCanvas(state.width,state.height);}
 function countMask(c){const a=alpha(c);let n=0;for(const v of a)if(v)n++;return n;}
-function layer(bitmap,name,extra={}){return {id:++serial,name,bitmap,original:bitmap,x:0,y:0,width:bitmap.width,height:bitmap.height,rotation:0,visible:true,opacity:1,...extra};}
+function layer(bitmap,name,extra={}){const original=extra.original||bitmap;return {id:++serial,name,bitmap:original,original,x:0,y:0,width:bitmap.width,height:bitmap.height,rotation:0,visible:true,opacity:1,...extra,...(original!==bitmap?{mask:resultMask(bitmap,original),bitmap:original,maskEnabled:true}:{})};}
+function fromAlpha(values,w,h){const rgba=new Uint8ClampedArray(w*h*4);for(let i=0;i<values.length;i++){rgba[i*4]=rgba[i*4+1]=rgba[i*4+2]=255;rgba[i*4+3]=values[i];}return fromPixels(rgba,w,h);}
+function resultMask(result,source){const a=alpha(result),b=alpha(source);return fromAlpha(Uint8ClampedArray.from(a,(v,i)=>b[i]?Math.min(255,v*255/b[i]):255),source.width,source.height);}
+function layerMask(l){return l.mask?alpha(l.mask):new Uint8ClampedArray(l.bitmap.width*l.bitmap.height).fill(255);}
 function initialize(bitmap,name='새 캔버스',preserveRequest=false,original=bitmap,empty=false){
   if(generating&&!preserveRequest)cancelGeneration();pending=null;revision++;
   const l=layer(bitmap,empty?'레이어 1':name,{original,empty});state={width:bitmap.width,height:bitmap.height,name,layers:[l],active:l.id,selection:makeCanvas(bitmap.width,bitmap.height),protection:makeCanvas(bitmap.width,bitmap.height)};
@@ -45,7 +51,13 @@ function initialize(bitmap,name='새 캔버스',preserveRequest=false,original=b
 function fit(){if(!state)return;zoom=Math.min((stage.clientWidth-100)/state.width,(stage.clientHeight-150)/state.height,1);zoom=Math.max(.05,zoom);pan={x:0,y:0};view();}
 function view(){if(!state)return;frame.style.width=(pending?.result.width||state.width)+'px';frame.style.height=(pending?.result.height||state.height)+'px';frame.style.transform=`translate(${pan.x}px,${pan.y}px) scale(${zoom})`;$('#zoom-label').textContent=Math.round(zoom*100)+'%';drawOverlay();}
 function point(e){const b=overlay.getBoundingClientRect();return {x:(e.clientX-b.left)/b.width*state.width,y:(e.clientY-b.top)/b.height*state.height};}
-function localPoint(l,p){const r=-l.rotation*Math.PI/180,dx=p.x-l.x-l.width/2,dy=p.y-l.y-l.height/2;return {x:((dx*Math.cos(r)-dy*Math.sin(r))+l.width/2)*l.bitmap.width/l.width,y:((dx*Math.sin(r)+dy*Math.cos(r))+l.height/2)*l.bitmap.height/l.height};}
+function localPoint(l,p){const r=-l.rotation*Math.PI/180,dx=p.x-l.x-l.width/2,dy=p.y-l.y-l.height/2;let u=((dx*Math.cos(r)-dy*Math.sin(r))+l.width/2)/l.width,v=((dx*Math.sin(r)+dy*Math.cos(r))+l.height/2)/l.height;if(l.quad){const q=mapPoint(invertMatrix(quadMatrix(l.quad)),u,v);u=q.x;v=q.y;}if(l.flipX)u=1-u;return {x:u*l.bitmap.width,y:v*l.bitmap.height};}
+function nativeWorldPoint(l,x,y){let u=x/l.bitmap.width,v=y/l.bitmap.height;if(l.flipX)u=1-u;if(l.quad){const p=mapPoint(quadMatrix(l.quad),u,v);u=p.x;v=p.y;}return worldPoint(l,(u-.5)*l.width,(v-.5)*l.height);}
+function sampleInLayer(bitmap,l){
+  const source=pixels(bitmap).data,out=new Uint8ClampedArray(l.bitmap.width*l.bitmap.height*4),matrix=l.quad?quadMatrix(l.quad):null,r=l.rotation*Math.PI/180,cos=Math.cos(r),sin=Math.sin(r);
+  for(let y=0;y<l.bitmap.height;y++)for(let x=0;x<l.bitmap.width;x++){let u=(x+.5)/l.bitmap.width,v=(y+.5)/l.bitmap.height;if(l.flipX)u=1-u;if(matrix){const q=mapPoint(matrix,u,v);u=q.x;v=q.y;}const dx=(u-.5)*l.width,dy=(v-.5)*l.height,sx=Math.floor(l.x+l.width/2+dx*cos-dy*sin),sy=Math.floor(l.y+l.height/2+dx*sin+dy*cos);if(sx<0||sy<0||sx>=bitmap.width||sy>=bitmap.height)continue;const at=(y*l.bitmap.width+x)*4,k=(sy*bitmap.width+sx)*4;for(let c=0;c<4;c++)out[at+c]=source[k+c];}
+  return fromPixels(out,l.bitmap.width,l.bitmap.height);
+}
 function worldPoint(l,x,y){const r=l.rotation*Math.PI/180;return {x:l.x+l.width/2+x*Math.cos(r)-y*Math.sin(r),y:l.y+l.height/2+x*Math.sin(r)+y*Math.cos(r)};}
 function layerCorners(l){return [[-1,-1],[1,-1],[1,1],[-1,1]].map(([a,b])=>worldPoint(l,a*l.width/2,b*l.height/2));}
 function transformHit(l,p){
@@ -100,13 +112,14 @@ function drawOverlay(){
 }
 function drawCanvas(){if(!state)return;const w=pending?.result.width||state.width,h=pending?.result.height||state.height;if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}const x=canvas.getContext('2d');x.clearRect(0,0,canvas.width,canvas.height);if(pending)x.drawImage(showOriginal?pending.before:pending.result,0,0);else state.layers.forEach(l=>drawLayer(x,l));drawOverlay();}
 function updateAvailability(){
+  advanced?.sync();
   $('#local-harmonize').disabled=!hasBackdrop()||processing||generating||!!pending;
   $('#ai-harmonize').disabled=!hasBackdrop()||processing||generating||!!pending;
   $('#edit-intent').disabled=processing||generating||!!pending;
   const has=!!state,selection=has&&countMask(state.selection)>0;
   $('#generate').disabled=!connected||processing||generating||!!pending||(!has&&mode!=='generate')||(mode==='edit'&&!selection)||(mode==='composite'&&!hasBackdrop());
   $('#generation-help').textContent=generating?'Codex 생성 중입니다. 결과가 도착하면 비교할 수 있습니다.':!connected?(connectionState?.provider==='api'?'API 연결 설정을 확인해주세요.':'AI 연결을 누르거나 연결 도움말에서 Codex 상태를 확인해주세요.'):connectionState?.usageLimited?'구독 사용 제한입니다. 해제 후 다시 시도하거나 연결 상태를 다시 확인해주세요.':mode==='edit'&&!selection?'브러시·사각형·올가미로 수정할 영역을 선택해주세요.':mode==='composite'?'배치 후 실행 · 대상 주변도 보정하며 추가 AI 사용량이 소모됩니다.':'결과를 확인한 후 적용할 수 있습니다.';
-  $('#remove-bg').disabled=!active()||processing||generating||!!pending;
+  $('#remove-bg').disabled=!active()||active().empty||active().contextPatch||processing||generating||!!pending;
   $$('[data-action="undo"]').forEach(b=>b.disabled=!history?.canUndo||processing||generating||!!pending);
   $$('[data-action="redo"]').forEach(b=>b.disabled=!history?.canRedo||processing||generating||!!pending);
   $$('[data-action="export"]').forEach(b=>b.disabled=!has||processing||generating);
@@ -157,7 +170,7 @@ function renderLayers(){
   if(!state){const empty=document.createElement('div');empty.className='empty-layers';empty.textContent='이미지를 열면 레이어가 여기에 표시됩니다.';container.append(empty);return;}
   for(const l of [...state.layers].reverse()){
     const row=document.createElement('div');row.className='layer-item'+(l.id===state.active?' selected':'');row.tabIndex=0;row.setAttribute('role','button');row.setAttribute('aria-label',l.name+' 레이어 선택');
-    const thumb=makeCanvas(60,48),ctx=thumb.getContext('2d');const s=Math.min(60/l.bitmap.width,48/l.bitmap.height);ctx.drawImage(l.bitmap,(60-l.bitmap.width*s)/2,(48-l.bitmap.height*s)/2,l.bitmap.width*s,l.bitmap.height*s);row.append(thumb);
+    const thumb=makeCanvas(60,48),ctx=thumb.getContext('2d');const s=Math.min(60/l.bitmap.width,48/l.bitmap.height);ctx.drawImage(renderedBitmap(l),(60-l.bitmap.width*s)/2,(48-l.bitmap.height*s)/2,l.bitmap.width*s,l.bitmap.height*s);row.append(thumb);
     const label=document.createElement('div'),name=document.createElement('strong'),detail=document.createElement('small');name.textContent=l.name;detail.textContent=l.empty?'빈 레이어 · 이미지 불러오기':`${Math.round(l.width)} × ${Math.round(l.height)} · ${Math.round(l.opacity*100)}%`;label.append(name,detail);row.append(label);
     const eye=document.createElement('button');eye.textContent=l.visible?'◉':'○';eye.title=l.visible?'레이어 숨기기':'레이어 표시';eye.setAttribute('aria-label',`${l.name} ${l.visible?'숨기기':'표시'}`);eye.addEventListener('click',e=>{e.stopPropagation();if(locked())return;commit({...state,layers:state.layers.map(a=>a.id===l.id?{...a,visible:!a.visible}:a)});});row.append(eye);
 
@@ -204,12 +217,9 @@ function paintTo(p){
   if(['brush','protect'].includes(tool)){
     stroke(d.stroke,d.last,p,size);state=d.base;maskOperation(d.stroke,tool==='protect'?'protection':'selection');
   }else{
-    const l=d.layer,a=localPoint(l,d.last),b=localPoint(l,p);stroke(d.stroke,a,b,size*l.bitmap.width/l.width);
-    const mask=alpha(d.stroke),source=pixels(d.layer.bitmap).data,original=pixels(d.layer.original).data;
-    let data;
-    if(tool==='restore') data=blendRGBA(source,original,mask);
-    else {data=new Uint8ClampedArray(source);for(let i=0;i<mask.length;i++)data[i*4+3]=source[i*4+3]*(1-mask[i]/255);}
-    state=d.base;updateLayer({bitmap:fromPixels(data,l.bitmap.width,l.bitmap.height)});
+    const l=d.layer,a=localPoint(l,d.last),b=localPoint(l,p);if(![a.x,a.y,b.x,b.y].every(Number.isFinite))return;stroke(d.stroke,a,b,size*l.bitmap.width/l.width);
+    const mask=alpha(d.stroke),base=layerMask(l),data=Uint8ClampedArray.from(base,(v,i)=>tool==='restore'?v+(255-v)*mask[i]/255:v*(1-mask[i]/255));
+    state=d.base;updateLayer({mask:fromAlpha(data,l.bitmap.width,l.bitmap.height),maskEnabled:true});
   }
   d.last=p;drawCanvas();
 }
@@ -227,7 +237,7 @@ overlay.addEventListener('pointerdown',e=>{
     drag.distance=Math.hypot(p.x-l.x-l.width/2,p.y-l.y-l.height/2);drag.angle=Math.atan2(p.y-l.y-l.height/2,p.x-l.x-l.width/2);return;
   }
   if(['rect','lasso'].includes(tool)){drag.type='shape';drag.shape={start:p,end:p};drag.points=[p];return;}
-  if(['erase','restore'].includes(tool)&&!l){drag=null;return;}
+  if(['erase','restore'].includes(tool)&&(!l||l.contextPatch)){drag=null;return;}
   drag.type='paint';drag.layer=l;drag.stroke=['erase','restore'].includes(tool)?makeCanvas(l.bitmap.width,l.bitmap.height):blankMask();if(!drag.selectionClick)paintTo(p);
 });
 overlay.addEventListener('pointermove',e=>{
@@ -289,17 +299,13 @@ stage.addEventListener('dragover',e=>{e.preventDefault();stage.classList.add('dr
 
 function selectionErase(restore=false){
   const l=active();if(!l||locked())return;if(!countMask(state.selection)){toast('먼저 영역을 선택해주세요.');return;}
-  const maskCanvas=makeCanvas(l.bitmap.width,l.bitmap.height),x=maskCanvas.getContext('2d');
-  // Inverse layer transform maps document selection into native layer pixels.
-  x.scale(l.bitmap.width/l.width,l.bitmap.height/l.height);x.translate(l.width/2,l.height/2);x.rotate(-l.rotation*Math.PI/180);x.translate(-l.x-l.width/2,-l.y-l.height/2);x.drawImage(state.selection,0,0);
-  const mask=alpha(maskCanvas),a=pixels(l.bitmap).data;let out;
-  if(restore)out=blendRGBA(a,pixels(l.original).data,mask);
-  else{out=new Uint8ClampedArray(a);for(let i=0;i<mask.length;i++)out[i*4+3]=a[i*4+3]*(1-mask[i]/255);}
-  updateLayer({bitmap:fromPixels(out,l.bitmap.width,l.bitmap.height)});commit(state,restore?'선택 영역을 원본으로 복원했습니다.':'선택 영역을 투명하게 지웠습니다.');
+  if(l.contextPatch){toast('배경 보정 레이어 대신 원본 대상 레이어를 선택해주세요.');return;}
+  const mask=alpha(sampleInLayer(state.selection,l)),base=layerMask(l),out=Uint8ClampedArray.from(base,(v,i)=>restore?v+(255-v)*mask[i]/255:v*(1-mask[i]/255));
+  updateLayer({mask:fromAlpha(out,l.bitmap.width,l.bitmap.height),maskEnabled:true});commit(state,restore?'선택 영역의 마스크를 복원했습니다.':'선택 영역을 마스크로 숨겼습니다.');
 }
 async function removeBg(){
   if(!active()||locked())return;const l=active();processing=true;updateAvailability();
-  try{const result=await removeBackground(l.bitmap,$('#bg-engine').value,Number($('#tolerance').value),s=>$('#bg-help').textContent=s);updateLayer({bitmap:result});commit(state,'배경 제거 완료 · 복원 브러시로 다시 살릴 수 있습니다.');$('#bg-help').textContent='배경 제거가 완료되었습니다. 지우기·복원 도구로 가장자리를 보정하세요.';}
+  try{const result=await removeBackground(l.bitmap,$('#bg-engine').value,Number($('#tolerance').value),s=>$('#bg-help').textContent=s);updateLayer({mask:resultMask(result,l.bitmap),maskEnabled:true});commit(state,'배경 제거 완료 · 원본은 보존되며 복원 브러시로 다시 살릴 수 있습니다.');$('#bg-help').textContent='배경 제거가 완료되었습니다. 지우기·복원 도구로 가장자리를 보정하세요.';}
   catch(error){toast(error.message);$('#bg-help').textContent=error.message;}
   finally{processing=false;updateAvailability();}
 }
@@ -311,6 +317,7 @@ function hasBackdrop(doc=state,l=active()){
   const i=doc.layers.findIndex(a=>a.id===l.id);return doc.layers.slice(0,i).some(a=>a.visible&&a.opacity>0&&!a.empty);
 }
 function targetSpace(bitmap,l){
+  if(l.quad||l.flipX)return sampleInLayer(bitmap,l);
   const c=makeCanvas(l.bitmap.width,l.bitmap.height),x=c.getContext('2d');
   x.scale(l.bitmap.width/l.width,l.bitmap.height/l.height);x.translate(l.width/2,l.height/2);x.rotate(-l.rotation*Math.PI/180);x.translate(-l.x-l.width/2,-l.y-l.height/2);x.drawImage(bitmap,0,0);return c;
 }
@@ -321,7 +328,8 @@ async function previewHarmonize(){
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     const index=doc.layers.findIndex(a=>a.id===l.id),background=flatten({...doc,layers:doc.layers.slice(0,index)}),ref=targetSpace(background,l);
     const input=pixels(l.bitmap).data,reference=pixels(ref).data,strength=Number($('#harmonize-strength').value)/100;
-    let matched=matchColorRGBA(input,reference,strength);matched=blendSubjectEdges(matched,reference,l.bitmap.width,l.bitmap.height,strength*.45);
+    const effective=maskRGBA(input,l.mask&&l.maskEnabled!==false?layerMask(l):null);
+    let matched=matchColorRGBA(effective,reference,strength);matched=blendSubjectEdges(matched,reference,l.bitmap.width,l.bitmap.height,strength*.45);matched=retainNativeAlpha(input,matched,effective);
     const protection=alpha(targetSpace(doc.protection,l)),all=new Uint8ClampedArray(protection.length).fill(255);
     matched=blendRGBA(input,matched,all,protection);
     const bitmap=fromPixels(matched,l.bitmap.width,l.bitmap.height),edited={...doc,layers:doc.layers.map(a=>a.id===l.id?{...a,bitmap}:a.contextPatch&&a.sourceLayerId===l.id?{...a,visible:false}:a)};
@@ -365,7 +373,7 @@ async function generate(){
     const guide=copy(input),tint=pixels(paddedMask);for(let i=0;i<tint.data.length;i+=4){tint.data[i]=255;tint.data[i+1]=0;tint.data[i+2]=255;tint.data[i+3]=255-tint.data[i+3];}const tintCanvas=fromPixels(tint.data,geometry.width,geometry.height);guide.getContext('2d').globalAlpha=.4;guide.getContext('2d').drawImage(tintCanvas,0,0);payload.guide=guide.toDataURL('image/png');
     payload.prompt=operation==='composite'?`Use the first image as the exact approved layout. HARMONIZE the already placed subject with the scene. Preserve its exact position, scale, silhouette, identity and camera perspective. Match the scene light direction, color temperature, exposure and local contrast. Add physically plausible contact shadow, ambient occlusion and only appropriate subtle reflections on the actual receiving surface. Preserve existing floor/wall texture; do not replace the room or create an unrelated lighting setup. ${connectionState?.provider==='codex'?'Image 2 is the region guide; image 3 is the subject reference.':'The second image is the subject reference.'} Modify only the mask area. User request: ${prompt}`:`Edit only the indicated region; preserve composition and unmasked details. User request: ${prompt}`;
     if(adding)payload.prompt=`ADD ONLY the requested subject and its soft contact shadow. Keep the whole subject within the indicated region with padding around all extremities. Use the scene ONLY as perspective and lighting reference. Generate the complete isolated subject centered with transparent padding. The application will fit it to the selected region. Use actual alpha transparency; never paint checkerboard squares or a fake transparency pattern. Do not draw the background or magenta guide. User request: ${prompt}`;
-    if(operation==='composite'&&active())payload.reference=active().bitmap.toDataURL('image/png');
+    if(operation==='composite'&&active())payload.reference=renderedBitmap(active()).toDataURL('image/png');
   }
   $('#busy-message').textContent='연결 확인 및 전송 중';
     const response=await apiFetch('/api/image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:controller.signal});
@@ -412,7 +420,7 @@ function applyResult(){
   // Keep previous layers for recovery, hide them to avoid double-compositing transparent pixels.
   commit({...state,width:result.width,height:result.height,layers:[...state.layers.map(a=>({...a,visible:false})),l],active:l.id,selection:makeCanvas(result.width,result.height),protection:operation==='generate'?makeCanvas(result.width,result.height):state.protection},'결과를 적용했습니다. 이전 레이어는 숨김 상태로 보관했습니다.');
 }
-function exportPNG(){if(!state)return;const c=pending?pending.result:flatten();c.toBlob(blob=>{if(!blob){toast('PNG를 만들지 못했습니다.');return;}const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=`2026-10-28-${state.name.replace(/[<>:"/\\|?*]/g,'-')}-v1.5.4.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('PNG를 내보냈습니다. 원본 파일은 변경하지 않았습니다.');},'image/png');}
+function exportPNG(){if(state&&!generating&&!processing)advanced.openExport();}
 
 function sample(){
   if(locked())return;if(state&&!confirm('현재 작업을 샘플로 바꿀까요? 필요한 결과는 먼저 내보내세요.'))return;
@@ -488,7 +496,7 @@ function checkConnection(force=false){
   connectionCheck=(async()=>{try{const response=await apiFetch('/api/status'+(force?'?refresh=1':''));if(!response.ok)throw Error();const data=await response.json();connectionState=data;connected=!!data.connected;
     $('#connection-badge').textContent=data.usageLimited?'Codex 사용 제한':data.imageVerified?'Codex 이미지 사용 가능':connected?'Codex 로그인됨':data.installed?'Codex 로그인 필요':'Codex 설치 필요';$('#connection-badge').classList.toggle('connected',connected);
     $('#connection-badge').title=data.imageVerified?'현재 브릿지에서 실제 이미지 실행을 확인했습니다.':'로그인 확인이며, 실제 이미지 도구·한도는 생성 시 확인합니다.';
-    $('.connection-caption').textContent='ChatGPT 구독';$('.privacy-note').textContent='생성을 누르면 이미지가 PC의 Codex를 통해 OpenAI로 전송되며 구독 사용량이 소모됩니다.';
+    $('.connection-caption').textContent='ChatGPT 구독';
     $('#codex-installed').textContent=data.installed?'설치됨 · '+(data.version||''):'설치 확인 필요';$('#codex-login').textContent=data.loggedIn?'ChatGPT 로그인됨':'ChatGPT 로그인 필요';$('#codex-image').textContent=data.imageVerified?'실제 이미지 실행 확인됨':'첫 생성에서 확인';
   }catch(error){connected=false;$('#connection-badge').title=error.message||'로컬 연결을 확인해주세요.';$('#connection-badge').textContent=bridgeState().hasSession?'AI 연결 끊김':'AI 연결 필요';$('#connection-badge').classList.remove('connected');for(const id of ['codex-installed','codex-login','codex-image'])$('#'+id).textContent='AI 연결 후 확인';}})().finally(()=>{connectionCheck=null;updateAvailability();updateAiControls();});return connectionCheck;
 }
@@ -500,14 +508,29 @@ $('#refresh-connection').addEventListener('click',async e=>{e.target.disabled=tr
 
 let saveTimer,saveQueue=Promise.resolve(),storageReady=false,savedSession=null,restoring=false;
 function canvasBlob(c){return new Promise((resolve,reject)=>c.toBlob(b=>b?resolve(b):reject(Error('이미지 저장 실패')),'image/png'));}
-async function packDocument(doc){return {...doc,selection:await canvasBlob(doc.selection),protection:await canvasBlob(doc.protection),layers:await Promise.all(doc.layers.map(async l=>({...l,bitmap:await canvasBlob(l.bitmap),original:await canvasBlob(l.original)})))};}
+async function packDocument(doc){return {...doc,selection:await canvasBlob(doc.selection),protection:await canvasBlob(doc.protection),layers:await Promise.all(doc.layers.map(async l=>({...l,bitmap:await canvasBlob(l.bitmap),original:await canvasBlob(l.original),mask:l.mask?await canvasBlob(l.mask):null})))};}
 async function unpackCanvas(blob){const image=await createImageBitmap(blob);const c=makeCanvas(image.width,image.height);c.getContext('2d').drawImage(image,0,0);image.close();return c;}
-async function unpackDocument(doc){return {...doc,selection:await unpackCanvas(doc.selection),protection:await unpackCanvas(doc.protection),layers:await Promise.all(doc.layers.map(async l=>({...l,bitmap:await unpackCanvas(l.bitmap),original:await unpackCanvas(l.original)})))};}
+async function unpackDocument(doc){return {...doc,selection:await unpackCanvas(doc.selection),protection:await unpackCanvas(doc.protection),layers:await Promise.all(doc.layers.map(async l=>({...l,bitmap:await unpackCanvas(l.bitmap),original:await unpackCanvas(l.original),mask:l.mask?await unpackCanvas(l.mask):null})))};}
 function scheduleSave(){if(!storageReady||restoring||!state)return;clearTimeout(saveTimer);$('#save-status').textContent='브라우저 저장 대기 중';saveTimer=setTimeout(()=>{const doc=state,result=pending,drafts={...modeDrafts,[mode]:$('#prompt').value},selectedMode=mode,editIntent=$('#edit-intent').value;$('#save-status').textContent='브라우저에 저장 중…';saveQueue=saveQueue.catch(()=>{}).then(async()=>{const data={version:1,savedAt:Date.now(),doc:await packDocument(doc),mode:selectedMode,editIntent,drafts,pending:result?{operation:result.operation,layerEdit:result.layerEdit?{id:result.layerEdit.id,bitmap:await canvasBlob(result.layerEdit.bitmap)}:null,contextPatch:result.contextPatch?await canvasBlob(result.contextPatch):null,sourceLayerId:result.sourceLayerId,targetId:result.targetId,notice:result.notice,additionPlacement:result.additionPlacement,addition:result.addition?await canvasBlob(result.addition):null,before:await canvasBlob(result.before),result:await canvasBlob(result.result)}:null};await sessionStore(data);savedSession=data;$('#restore-session').hidden=true;$('#save-status').textContent='브라우저에 자동 저장됨';}).catch(()=>{$('#save-status').textContent='자동 저장 실패 · PNG를 내보내주세요';});},600);}
 async function restoreAvailable(){try{savedSession=await sessionStore();$('#restore-session').hidden=!savedSession;$('#save-status').textContent=savedSession?'저장된 작업이 있습니다. 복구 버튼을 눌러주세요.':'편집하면 이 브라우저에 자동 저장됩니다.';}catch{$('#save-status').textContent='브라우저 저장을 사용할 수 없습니다.';}finally{storageReady=true;if(state)scheduleSave();}}
 $('#restore-session').addEventListener('click',async()=>{if(!savedSession||locked())return;if(state&&!confirm('현재 작업을 저장된 작업으로 교체할까요?'))return;const chosenSession=savedSession;restoring=true;clearTimeout(saveTimer);processing=true;updateAvailability();try{await saveQueue.catch(()=>{});const saved=chosenSession,doc=await unpackDocument(saved.doc),result=saved.pending?{...saved.pending,layerEdit:saved.pending.layerEdit?{id:saved.pending.layerEdit.id,bitmap:await unpackCanvas(saved.pending.layerEdit.bitmap)}:null,contextPatch:saved.pending.contextPatch?await unpackCanvas(saved.pending.contextPatch):null,addition:saved.pending.addition?await unpackCanvas(saved.pending.addition):null,before:await unpackCanvas(saved.pending.before),result:await unpackCanvas(saved.pending.result)}:null;state=doc;pending=result;history=new History({...doc,action:'저장된 작업 복구'});serial=Math.max(serial,...doc.layers.map(l=>l.id));Object.assign(modeDrafts,saved.drafts);mode=saved.mode||'edit';$('#edit-intent').value=saved.editIntent||(mode==='composite'?'composite':'add');$('#prompt').value=modeDrafts[mode]||'';revision++;$('#welcome').hidden=true;frame.hidden=false;$('#restore-session').hidden=true;$('#save-status').textContent='저장된 작업 복구됨';fit();render();toast('레이어·선택·보호 영역을 복구했습니다. 이전 실행 취소 이력은 새로 시작합니다.');}catch{toast('저장된 작업을 복구하지 못했습니다.');}finally{processing=false;restoring=false;updateAvailability();scheduleSave();}});
 $('#prompt').addEventListener('input',scheduleSave);
 
+advanced=mountEditorTools({
+  doc:()=>state,active,locked,busy:()=>processing||generating||!!pending,flatten:()=>state?(pending?.result||flatten()):null,
+  change(changes,label){const l=active();if(!l||l.empty||l.contextPatch||locked())return;updateLayer(changes);commit(state,null,label);},
+  preview(changes){const l=active();if(!l||l.contextPatch||locked())return;if(!effectBase)effectBase=state;updateLayer(changes);drawCanvas();},
+  finish(label){if(!effectBase)return;effectBase=null;commit(state,null,label);},
+  mask(command){
+    const l=active();if(!l||l.empty||l.contextPatch||locked())return;
+    if(command==='hide'||command==='reveal'){if(!l.mask)updateLayer({mask:fromAlpha(layerMask(l),l.bitmap.width,l.bitmap.height),maskEnabled:true});else updateLayer({maskEnabled:true});commit(state,null,'마스크 브러시 준비');setTool(command==='hide'?'erase':'restore');return;}
+    const mask=command==='clear'?null:command==='invert'?fromAlpha(Uint8ClampedArray.from(layerMask(l),v=>255-v),l.bitmap.width,l.bitmap.height):countMask(state.selection)?sampleInLayer(state.selection,l):fromAlpha(layerMask(l),l.bitmap.width,l.bitmap.height);
+    updateLayer({mask,maskEnabled:true});commit(state,null,command==='clear'?'마스크 제거':command==='invert'?'마스크 반전':'레이어 마스크 만들기');
+  },
+  selectionStart(){if(!state||locked())return null;if(!countMask(state.selection)){toast('먼저 영역을 선택해주세요.');return null;}selectionBase=state;return {alpha:alpha(state.selection),width:state.width,height:state.height};},
+  selectionPreview(values){if(!selectionBase)return;state={...selectionBase,selection:fromAlpha(values,state.width,state.height)};drawOverlay();},
+  selectionFinish(apply){if(!selectionBase)return;const preview=state;state=selectionBase;selectionBase=null;if(apply)commit(preview,null,'선택 영역 다듬기');else render();}
+});
 render();checkConnection();restoreAvailable();
 
 $('#harmonize-strength').addEventListener('input',e=>$('#harmonize-value').textContent=e.target.value+'%');
