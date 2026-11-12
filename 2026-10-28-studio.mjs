@@ -366,7 +366,8 @@ async function generate(){
   const before=doc?flatten(doc):makeCanvas(1024,1024);
   const allowed=operation==='generate'?null:editMask(doc,operation),protectedPixels=doc?alpha(doc.protection):null;
   if(allowed && !allowed.some((v,i)=>v && !protectedPixels[i])){throw Error('보호 영역 밖에 수정할 영역이 없습니다.');}
-  const payload={requestId:currentRequestId,mode:operation==='generate'?'generate':'edit',prompt,quality:$('#quality').value,size:$('#generation-size').value};
+  const preciseChanges=operation==='edit'&&connectionState?.provider==='codex';
+  const payload={preciseChanges,requestId:currentRequestId,mode:operation==='generate'?'generate':'edit',prompt,quality:$('#quality').value,size:$('#generation-size').value};
   if(operation!=='generate'){
     const input=makeCanvas(geometry.width,geometry.height),inputCtx=input.getContext('2d');inputCtx.drawImage(before,geometry.x,geometry.y,geometry.drawWidth,geometry.drawHeight);
     payload.image=input.toDataURL('image/png');payload.size=geometry.size;
@@ -392,6 +393,22 @@ async function generate(){
     }else{
       const generated=makeCanvas(doc.width,doc.height),sx=image.width/geometry.width,sy=image.height/geometry.height;
       generated.getContext('2d').drawImage(image,geometry.x*sx,geometry.y*sy,geometry.drawWidth*sx,geometry.drawHeight*sy,0,0,doc.width,doc.height);
+      if(preciseChanges){
+        if(!body.changePolygons?.length)throw Error('변경 영역을 받지 못했습니다. 최신 Codex 브릿지를 설치한 뒤 다시 시도해주세요.');
+        const changes=makeCanvas(doc.width,doc.height),ctx=changes.getContext('2d');
+        for(const polygon of body.changePolygons){
+          ctx.beginPath();
+          for(let i=0;i<polygon.length;i+=2){
+            const x=(polygon[i]*geometry.width-geometry.x)*doc.width/geometry.drawWidth;
+            const y=(polygon[i+1]*geometry.height-geometry.y)*doc.height/geometry.drawHeight;
+            if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+          }
+          ctx.closePath();ctx.fill();
+        }
+        const mask=alpha(changes);
+        for(let i=0;i<allowed.length;i++)allowed[i]=Math.min(allowed[i],mask[i]);
+        if(!allowed.some((v,i)=>v&&protectedPixels[i]<255))throw Error('선택 영역에서 적용할 변경을 찾지 못했습니다. 다시 시도해주세요.');
+      }
       if(operation==='composite'){const rgba=contextOverlay(pixels(generated).data,allowed,protectedPixels);contextPatch=fromPixels(rgba,doc.width,doc.height);result=fromPixels(overRGBA(pixels(before).data,rgba),doc.width,doc.height);notice='AI 조화 미리보기 · 대상 주변의 배경도 보정됩니다';}else result=fromPixels(blendRGBA(pixels(before).data,pixels(generated).data,allowed,protectedPixels),doc.width,doc.height);
     }
     if(!state){initialize(makeCanvas(result.width,result.height),'AI 이미지',true);}
